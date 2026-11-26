@@ -1,8 +1,9 @@
 /*
- * Safe Teen 프로토타입 — SafeTwin 국립청소년수련시설 스마트 안전관제
- * 2단계: SVG 등각투영 3D 건물 모델 + 가상 센서 시뮬레이터(전 화면 실시간 연동)
+ * Safe Teen 프로토타입 — SafeTwin 국립청소년수련시설 스마트 안전관제 (App.jsx 단일 파일)
+ * 1~3단계: 3D 디지털 트윈 · 가상 센서 시나리오 4종 · 모바일 우회 대피 경로 · 음성 안내 · 119 신고
+ * 4단계: 안전점검 모의데이터(CSV 94건) AI 분석 뷰 + 3D 구역별 과거 지적 사례·AI 사전 위험도
  * 사용 라이브러리: React · Tailwind CSS · lucide-react · recharts
- * 센서·기상·이벤트 값과 건물 평면은 모두 시연용 가상 데이터입니다.
+ * 센서·기상·이벤트 값, 건물 평면, 점검 데이터는 모두 시연용 가상(모의) 데이터입니다.
  */
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
@@ -10,10 +11,11 @@ import {
   Gauge, Siren, Eye, Maximize2, Minimize2, RotateCw, Layers, SlidersHorizontal, Info, ShieldCheck,
   AlertTriangle, Flame, HardHat, HeartPulse, PhoneCall, Navigation, BookOpen, Mic, Menu, Signal, Wifi,
   BatteryFull, ChevronsUpDown, ChevronDown, ChevronRight, Bluetooth, QrCode, MapPin, DoorOpen, X, Cpu,
-  Volume2, BadgeCheck, Check,
+  Volume2, BadgeCheck, Check, BarChart3, Sparkles, History, Filter, FileSpreadsheet, ArrowUpRight, Building2,
+  ClipboardList,
 } from 'lucide-react';
 import {
-  ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell, ComposedChart, Line,
+  ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell, ComposedChart, Line, PieChart, Pie,
   XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
 } from 'recharts';
 
@@ -32,15 +34,17 @@ const RGB = { safe: '34,197,94', caution: '245,158,11', danger: '239,68,68' };
 const RED = '#e5222f';
 const FONT = "'IBM Plex Sans KR','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR','Noto Sans CJK KR',system-ui,sans-serif";
 const CARD_SHADOW = '0 1px 2px rgba(15,23,42,0.06), 0 6px 16px rgba(15,23,42,0.06)';
+/* 삼성 인터넷 다크 모드·고대비 글꼴에서 SVG 글자가 하얗게 뭉개지지 않도록 모든 <text>에 적용(테두리·필터 없음) */
+const SVG_TEXT = { paintOrder: 'normal', WebkitTextStroke: '0px' };
 
 const GLOBAL_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap');
-:root{--sim-h:78px}
+:root{--sim-h:124px;color-scheme:dark}
 .st-root{font-family:${FONT};-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 .st-root button,.st-root input{font-family:inherit}
 .st-num{font-variant-numeric:tabular-nums}
 .st-keep{word-break:keep-all}
-.st-shell{padding-bottom:var(--sim-h)}
+.st-root svg text{paint-order:normal!important;-webkit-text-stroke:0!important;stroke:none!important;filter:none!important;text-shadow:none!important}
 .st-simbar{position:fixed;left:0;right:0;bottom:0;height:var(--sim-h);z-index:45}
 .st-twin{height:640px}
 .st-stage-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
@@ -273,23 +277,23 @@ const INCIDENT = {
 const WEATHER_NORMAL = { sky: '흐림', icon: Cloud, temp: 7.0, rh: 62, rainProb: 20, rain: 0, wind: 1.6 };
 const SCENARIOS = {
   normal: {
-    no: 1, title: '평시 정상', sub: '전 구역 안전', icon: ShieldCheck, color: '#22c55e', score: 12,
+    no: 1, title: '평시 정상', short: '평시 정상', sub: '전 구역 안전', icon: ShieldCheck, color: '#22c55e', score: 12,
     factors: { dew: 14, weather: 10, radar: 2, sound: 4, fire: 0 }, zones: {}, mobile: 'normal', weather: WEATHER_NORMAL,
     check: { tone: 'safe', icon: ShieldCheck, title: '교차 검증 정상 · 이상 신호 없음', sub: '레이더·음향·결로 센서 모두 기준 이내' },
   },
   rain: {
-    no: 2, title: '강우·결로 주의', sub: '우천 · 습도 90%', icon: CloudRain, color: '#f59e0b', score: 76,
+    no: 2, title: '강우·결로 주의', short: '강우·결로', sub: '우천 · 습도 90%', icon: CloudRain, color: '#f59e0b', score: 76,
     factors: { dew: 86, weather: 82, radar: 3, sound: 5, fire: 0 }, zones: { '1-deck': 'caution' }, mobile: 'caution',
     weather: { sky: '우천', icon: CloudRain, temp: 5.8, rh: 90, rainProb: 90, rain: 4.5, wind: 3.2 },
     check: { tone: 'caution', icon: CloudRain, title: '규칙 기반 예측 · 결로 주의 발령', sub: '바닥온도 ≤ 이슬점+1℃ · 우천 · 습도 90%' },
   },
   impact: {
-    no: 3, title: '단순 충격음', sub: '오경보 필터링 테스트', icon: Volume2, color: '#38bdf8', score: 18,
+    no: 3, title: '단순 충격음', short: '단순 충격음', sub: '오경보 필터링 테스트', icon: Volume2, color: '#38bdf8', score: 18,
     factors: { dew: 14, weather: 10, radar: 4, sound: 58, fire: 0 }, zones: {}, mobile: 'normal', weather: WEATHER_NORMAL,
     check: { tone: 'info', icon: BadgeCheck, title: '단순 활동 감지 - 오경보 필터링 완료', sub: '음향 85dB 단독 · 레이더 정상 움직임 → 경보 보류' },
   },
   fire: {
-    no: 4, title: '2F 중앙계단 화재·낙상', sub: '교차 검증 · 비상', icon: Flame, color: '#ef4444', score: 96,
+    no: 4, title: '2F 중앙계단 화재·낙상', short: '2F 화재·낙상', sub: '교차 검증 · 비상', icon: Flame, color: '#ef4444', score: 96,
     factors: { dew: 14, weather: 10, radar: 98, sound: 95, fire: 92 },
     zones: { '2-cs': 'danger', '2-corr': 'caution', '1-cs': 'caution', '3-cs': 'caution' }, mobile: 'emergency', weather: WEATHER_NORMAL,
     check: { tone: 'danger', icon: Siren, title: '교차 검증 통과 · 2단계 비상 경보', sub: '고도 급강하·무동작 10초 + 비명·충격음 92dB' },
@@ -398,6 +402,136 @@ function scenarioLogs(id, now) {
       return [{ lv: 'ok', ts: now, text: `시나리오 1 · 평시 정상 관제 — 전 구역 안전 (센서 ${SENSOR_TOTAL}/${SENSOR_TOTAL})` }];
   }
 }
+
+/* ════════════════ 3-1. 안전점검 모의데이터 (CSV 94건 집계 + 주의·불량 지적 25건) ════════════════ */
+// 원본 CSV 전체 대신 ① 전체 집계 통계 객체와 ② 주의·불량 핵심 지적 사례 JSON 배열만 내장
+const MOCK_STATS = {
+  "source": "국립청소년수련시설 안전관리 모의데이터(CSV)",
+  "rows": 94,
+  "facilities": 10,
+  "period": ["2026-01-02", "2026-11-17"],
+  "result": [{"key": "양호", "n": 69}, {"key": "주의(경미)", "n": 18}, {"key": "불량(시정요구)", "n": 7}],
+  "byField": [
+    {"field": "전기설비", "total": 14, "caution": 5, "bad": 0},
+    {"field": "가스설비", "total": 13, "caution": 2, "bad": 3},
+    {"field": "소방안전", "total": 14, "caution": 1, "bad": 0},
+    {"field": "건축·시설물", "total": 10, "caution": 4, "bad": 1},
+    {"field": "수련활동장비", "total": 17, "caution": 3, "bad": 1},
+    {"field": "위생·급식", "total": 17, "caution": 1, "bad": 2},
+    {"field": "응급·보건", "total": 9, "caution": 2, "bad": 0},
+  ],
+  "byArea": [
+    {"area": "실내체육관", "total": 21, "caution": 3, "bad": 0},
+    {"area": "실험·체험실", "total": 16, "caution": 1, "bad": 0},
+    {"area": "야외활동장(모험시설)", "total": 12, "caution": 4, "bad": 1},
+    {"area": "생활관(숙소)", "total": 11, "caution": 2, "bad": 0},
+    {"area": "보일러·기계실", "total": 11, "caution": 3, "bad": 2},
+    {"area": "주차장 및 외곽", "total": 10, "caution": 2, "bad": 3},
+    {"area": "대강당", "total": 7, "caution": 1, "bad": 0},
+    {"area": "식당 및 조리실", "total": 6, "caution": 2, "bad": 1},
+  ],
+  "byType": {"정기점검": 46, "수시점검": 22, "특별점검(계절별)": 16, "합동안전점검": 10},
+  "action": {"flagged": 25, "done": 25, "avgDays": 2.0, "maxDays": 5, "sameDay": 4, "badAvgDays": 2.3},
+  "repeat": [
+    {"issue": "실외 콘센트 방수커버 이완", "n": 3},
+    {"issue": "분전반 내부 먼지 누적 및 청결 미흡", "n": 2},
+    {"issue": "구급함 내 일부 소모품 유효기간 임박", "n": 2},
+    {"issue": "체육관 매트 모서리 찢어짐", "n": 2},
+    {"issue": "복도 미끄럼방지 테이프 마모", "n": 2},
+    {"issue": "가스배관 고정 클램프 일부 헐거움", "n": 2},
+    {"issue": "야외 데크 일부 목재 들뜸 현상", "n": 2},
+    {"issue": "가스자동절체기 압력 게이지 파손", "n": 2},
+  ],
+};
+// 주의(경미)·불량(시정요구) 지적 사례 = CSV의 지적 25건 전체(최신순)
+const MOCK_CASES = [
+  {"id": "SFT-2026-020", "date": "2026-10-01", "facility": "국립평창청소년수련원", "area": "식당 및 조리실", "field": "위생·급식", "result": "불량", "issue": "냉장·냉동고 온도 설정 기준 초과", "action": "전문업체 수리 후 재점검 완료", "done": "2026-10-05"},
+  {"id": "SFT-2026-080", "date": "2026-09-26", "facility": "국립고흥청소년우주체험센터", "area": "야외활동장(모험시설)", "field": "수련활동장비", "result": "주의", "issue": "체육관 매트 모서리 찢어짐", "action": "청소 및 정비 완료", "done": "2026-10-01"},
+  {"id": "SFT-2026-083", "date": "2026-09-08", "facility": "국립고흥청소년우주체험센터", "area": "야외활동장(모험시설)", "field": "가스설비", "result": "주의", "issue": "가스배관 고정 클램프 일부 헐거움", "action": "현장 즉시 시정 완료", "done": "2026-09-12"},
+  {"id": "SFT-2026-075", "date": "2026-09-01", "facility": "국립고흥청소년우주체험센터", "area": "실내체육관", "field": "건축·시설물", "result": "주의", "issue": "야외 데크 일부 목재 들뜸 현상", "action": "현장 즉시 시정 완료", "done": "2026-09-02"},
+  {"id": "SFT-2026-070", "date": "2026-08-13", "facility": "국립영덕청소년해양환경체험센터", "area": "보일러·기계실", "field": "가스설비", "result": "주의", "issue": "가스배관 고정 클램프 일부 헐거움", "action": "예비품으로 교체 완료", "done": "2026-08-17"},
+  {"id": "SFT-2026-013", "date": "2026-08-09", "facility": "국립청소년생태센터", "area": "보일러·기계실", "field": "가스설비", "result": "불량", "issue": "보일러실 가스배관 이음부 미세 누설 감지", "action": "전원 차단 및 부품 전면 교체 완료", "done": "2026-08-12"},
+  {"id": "SFT-2026-073", "date": "2026-08-05", "facility": "국립영덕청소년해양환경체험센터", "area": "대강당", "field": "건축·시설물", "result": "주의", "issue": "야외 데크 일부 목재 들뜸 현상", "action": "3일 이내 보수 완료", "done": "2026-08-06"},
+  {"id": "SFT-2026-003", "date": "2026-08-04", "facility": "국립청소년바이오생명센터", "area": "야외활동장(모험시설)", "field": "응급·보건", "result": "주의", "issue": "구급함 내 일부 소모품 유효기간 임박", "action": "청소 및 정비 완료", "done": "2026-08-06"},
+  {"id": "SFT-2026-092", "date": "2026-07-26", "facility": "국립평창청소년수련원", "area": "생활관(숙소)", "field": "전기설비", "result": "주의", "issue": "실외 콘센트 방수커버 이완", "action": "현장 즉시 시정 완료", "done": "2026-07-27"},
+  {"id": "SFT-2026-048", "date": "2026-07-16", "facility": "국립평창청소년수련원", "area": "주차장 및 외곽", "field": "전기설비", "result": "주의", "issue": "실외 콘센트 방수커버 이완", "action": "3일 이내 보수 완료", "done": "2026-07-18"},
+  {"id": "SFT-2026-046", "date": "2026-07-02", "facility": "국립평창청소년수련원", "area": "보일러·기계실", "field": "수련활동장비", "result": "불량", "issue": "챌린지(모험)시설 안전벨트 버클 마모 심화", "action": "즉시 사용중지 및 긴급 보수 완료", "done": "2026-07-03"},
+  {"id": "SFT-2026-069", "date": "2026-06-03", "facility": "국립청소년디딤센터", "area": "보일러·기계실", "field": "수련활동장비", "result": "주의", "issue": "보호장구(헬멧) 턱끈 탄성 저하", "action": "청소 및 정비 완료", "done": "2026-06-04"},
+  {"id": "SFT-2026-091", "date": "2026-05-27", "facility": "국립청소년생태센터", "area": "주차장 및 외곽", "field": "가스설비", "result": "불량", "issue": "가스자동절체기 압력 게이지 파손", "action": "전문업체 수리 후 재점검 완료", "done": "2026-05-27"},
+  {"id": "SFT-2026-036", "date": "2026-05-17", "facility": "국립김제청소년농업생명체험센터", "area": "야외활동장(모험시설)", "field": "건축·시설물", "result": "불량", "issue": "옥상 난간 고정 볼트 이완 및 흔들림", "action": "즉시 사용중지 및 긴급 보수 완료", "done": "2026-05-20"},
+  {"id": "SFT-2026-017", "date": "2026-05-16", "facility": "국립중앙청소년수련원", "area": "식당 및 조리실", "field": "수련활동장비", "result": "주의", "issue": "체육관 매트 모서리 찢어짐", "action": "예비품으로 교체 완료", "done": "2026-05-17"},
+  {"id": "SFT-2026-010", "date": "2026-04-24", "facility": "국립청소년바이오생명센터", "area": "생활관(숙소)", "field": "전기설비", "result": "주의", "issue": "실외 콘센트 방수커버 이완", "action": "3일 이내 보수 완료", "done": "2026-04-24"},
+  {"id": "SFT-2026-025", "date": "2026-04-21", "facility": "국립청소년미래환경센터", "area": "주차장 및 외곽", "field": "전기설비", "result": "주의", "issue": "분전반 내부 먼지 누적 및 청결 미흡", "action": "현장 즉시 시정 완료", "done": "2026-04-21"},
+  {"id": "SFT-2026-088", "date": "2026-04-06", "facility": "국립청소년바이오생명센터", "area": "주차장 및 외곽", "field": "가스설비", "result": "불량", "issue": "가스자동절체기 압력 게이지 파손", "action": "즉시 사용중지 및 긴급 보수 완료", "done": "2026-04-07"},
+  {"id": "SFT-2026-056", "date": "2026-04-01", "facility": "국립청소년인터넷드림마을", "area": "야외활동장(모험시설)", "field": "건축·시설물", "result": "주의", "issue": "복도 미끄럼방지 테이프 마모", "action": "3일 이내 보수 완료", "done": "2026-04-02"},
+  {"id": "SFT-2026-063", "date": "2026-03-05", "facility": "국립김제청소년농업생명체험센터", "area": "주차장 및 외곽", "field": "위생·급식", "result": "불량", "issue": "자외선 살균소독기 램프 점등 불량", "action": "전문업체 수리 후 재점검 완료", "done": "2026-03-09"},
+  {"id": "SFT-2026-084", "date": "2026-02-14", "facility": "국립김제청소년농업생명체험센터", "area": "보일러·기계실", "field": "건축·시설물", "result": "주의", "issue": "복도 미끄럼방지 테이프 마모", "action": "청소 및 정비 완료", "done": "2026-02-17"},
+  {"id": "SFT-2026-077", "date": "2026-02-09", "facility": "국립김제청소년농업생명체험센터", "area": "실내체육관", "field": "소방안전", "result": "주의", "issue": "옥내소화전 앞 적치물 발견", "action": "현장 즉시 시정 완료", "done": "2026-02-13"},
+  {"id": "SFT-2026-014", "date": "2026-01-26", "facility": "국립평창청소년수련원", "area": "식당 및 조리실", "field": "위생·급식", "result": "주의", "issue": "식자재 창고 온습도계 배터리 방전", "action": "현장 즉시 시정 완료", "done": "2026-01-29"},
+  {"id": "SFT-2026-001", "date": "2026-01-14", "facility": "국립평창청소년수련원", "area": "실내체육관", "field": "전기설비", "result": "주의", "issue": "분전반 내부 먼지 누적 및 청결 미흡", "action": "청소 및 정비 완료", "done": "2026-01-14"},
+  {"id": "SFT-2026-047", "date": "2026-01-14", "facility": "국립청소년인터넷드림마을", "area": "실험·체험실", "field": "응급·보건", "result": "주의", "issue": "구급함 내 일부 소모품 유효기간 임박", "action": "3일 이내 보수 완료", "done": "2026-01-15"},
+];
+const RESULT_COLOR = { '양호': '#22c55e', '주의(경미)': '#f59e0b', '불량(시정요구)': '#ef4444' };
+const RESULT_TONE = { 주의: 'caution', 불량: 'danger' };
+const RESULT_FULL = { 주의: '주의(경미)', 불량: '불량(시정요구)' };
+const REPEAT_SET = new Set(MOCK_STATS.repeat.map((r) => r.issue));
+const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+
+/* 3D 트윈 구역 ↔ 모의데이터 연계 프로필: 점검구역·점검분야가 같거나 지적사항에 키워드가 들어 있으면 연계 */
+const ZONE_PROFILES = {
+  deck: { label: '1F 야외 나무 데크', zone: '1-deck', areas: ['야외활동장(모험시설)'], words: ['데크'] },
+  mech: { label: '1F 기계실', zone: '1-mech', areas: ['보일러·기계실'], words: ['보일러'] },
+  hall: { label: '3F 강당', zone: '3-hall', areas: ['대강당', '실내체육관'] },
+  kitchen: { label: '1F 식당', zone: '1-cafe', areas: ['식당 및 조리실'], words: ['식자재', '냉장'] },
+  corridor: { label: '층별 복도', zone: '2-corr', words: ['복도', '소화전'] },
+  dorm: { label: '2F 생활관(숙소)', zone: '2-r3', areas: ['생활관(숙소)'] },
+  stair: { label: '중앙·비상계단', zone: '2-cs', words: ['난간'] },
+  medical: { label: '1F 보건실', zone: '1-nurse', fields: ['응급·보건'] },
+  lab: { label: '3F 체험실', zone: '3-exp1', areas: ['실험·체험실'] },
+};
+function profileKeyOf(z) {
+  if (!z) return null;
+  switch (z.type) {
+    case 'deck': return 'deck';
+    case 'corridor': return 'corridor';
+    case 'room': return 'dorm';
+    case 'lounge': return z.floor === '2F' ? 'dorm' : null;
+    case 'auditorium': return 'hall';
+    case 'activity': return 'lab';
+    case 'dining': return 'kitchen';
+    case 'utility': return z.id === '1-mech' ? 'mech' : null;
+    case 'stair': case 'exit': return 'stair';
+    case 'medical': return 'medical';
+    default: return null;
+  }
+}
+const matchProfile = (p, c) => (p.areas || []).includes(c.area) || (p.fields || []).includes(c.field) || (p.words || []).some((w) => c.issue.includes(w));
+const basisText = (p) => [
+  p.areas && p.areas.length ? `점검구역 ${p.areas.join('·')}` : null,
+  p.fields && p.fields.length ? `점검분야 ${p.fields.join('·')}` : null,
+  p.words && p.words.length ? `지적사항에 ‘${p.words.join('’·‘')}’ 포함` : null,
+].filter(Boolean).join(' + ');
+
+/* AI 사전 위험도(0~100): 가중치 = 불량×3 + 주의×1 + 반복 지적 유형×1 + 최근 90일 지적×0.5 → 10 + 85×(1 − e^(−가중치/7)) */
+const PRE_RISK = {};
+function preRisk(key) {
+  if (!key) return { key: null, score: 10, cases: [], bad: 0, caution: 0, repeat: 0, recent: 0 };
+  if (PRE_RISK[key]) return PRE_RISK[key];
+  const p = ZONE_PROFILES[key];
+  const kw = (c) => (p.words || []).some((w) => c.issue.includes(w));
+  const cases = MOCK_CASES.filter((c) => matchProfile(p, c)) // 관련도 순: 지적사항 키워드 일치 → 불량 → 최신
+    .sort((a, b) => (kw(b) - kw(a)) || ((b.result === '불량') - (a.result === '불량')) || b.date.localeCompare(a.date));
+  const bad = cases.filter((c) => c.result === '불량').length;
+  const caution = cases.length - bad;
+  const repeat = new Set(cases.filter((c) => REPEAT_SET.has(c.issue)).map((c) => c.issue)).size;
+  const recent = cases.filter((c) => daysBetween(c.date, MOCK_STATS.period[1]) <= 90).length;
+  const weight = 3 * bad + caution + repeat + 0.5 * recent;
+  const score = Math.round(10 + 85 * (1 - Math.exp(-weight / 7)));
+  PRE_RISK[key] = { key, ...p, score, cases, bad, caution, repeat, recent };
+  return PRE_RISK[key];
+}
+const preLevel = (s) => (s >= 70 ? 'danger' : s >= 40 ? 'caution' : 'safe');
+const PRE_LABEL = { safe: '낮음', caution: '보통', danger: '높음' };
 
 /* ════════════════ 4. 유틸리티 · 훅 ════════════════ */
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -1198,14 +1332,19 @@ const BuildingLayer = React.memo(function BuildingLayer({ geo, theme, layers, mu
                   </g>
                 );
               })}
-              {L.labels !== false && F.tiles.map((t) => (t.label && !muted(t.z.id) ? (
-                <text
-                  key={`t${t.z.id}`} x={t.label.x} y={t.label.y} fontSize={t.label.fs} textAnchor="middle" dominantBaseline="central"
-                  fill={T.label} stroke={T.labelHalo} strokeWidth="3" fontWeight="600" style={{ paintOrder: 'stroke' }}
-                >
-                  {t.label.text}
-                </text>
-              ) : null))}
+              {L.labels !== false && F.tiles.map((t) => {
+                if (!t.label || muted(t.z.id)) return null;
+                const w = textWidth(t.label.text, t.label.fs) + 8;
+                const h = t.label.fs + 6;
+                return (
+                  <g key={`t${t.z.id}`}>
+                    <rect x={t.label.x - w / 2} y={t.label.y - h / 2} width={w} height={h} rx="4" fill={T.labelHalo} opacity="0.72" />
+                    <text x={t.label.x} y={t.label.y} fontSize={t.label.fs} textAnchor="middle" dominantBaseline="central" fill={T.label} fontWeight="600" style={SVG_TEXT}>
+                      {t.label.text}
+                    </text>
+                  </g>
+                );
+              })}
             </g>
           </g>
         );
@@ -1219,8 +1358,8 @@ const BuildingLayer = React.memo(function BuildingLayer({ geo, theme, layers, mu
           >
             {t.lead && <line x1={t.ax} y1={t.ay} x2={t.x} y2={t.y} stroke={T.guide} strokeWidth="1" />}
             <rect x={t.x} y={t.y - 13} width={t.w} height="26" rx="8" fill="rgba(13,27,48,0.94)" stroke={tone} strokeWidth={t.worst === 'safe' ? 1 : 1.6} className={t.worst === 'safe' ? undefined : `st-glow-${t.worst}`} />
-            <text x={t.compact ? t.x + t.w / 2 : t.x + 10} y={t.y} textAnchor={t.compact ? 'middle' : 'start'} dominantBaseline="central" fontSize="12.5" fontWeight="700" fill="#fff">{t.id}</text>
-            {!t.compact && <text x={t.x + 36} y={t.y} dominantBaseline="central" fontSize="12" fill={N.sub}>{t.title}</text>}
+            <text x={t.compact ? t.x + t.w / 2 : t.x + 10} y={t.y} textAnchor={t.compact ? 'middle' : 'start'} dominantBaseline="central" fontSize="12.5" fontWeight="700" fill="#fff" style={SVG_TEXT}>{t.id}</text>
+            {!t.compact && <text x={t.x + 36} y={t.y} dominantBaseline="central" fontSize="12" fill={N.sub} style={SVG_TEXT}>{t.title}</text>}
           </g>
         );
       })}
@@ -1277,10 +1416,10 @@ function StatusChip({ level = 'safe', label }) {
   );
 }
 
-function Panel({ icon: Icon, title, hint, children, tone }) {
+function Panel({ icon: Icon, title, hint, children, tone, className }) {
   return (
     <section
-      className="rounded-2xl border p-3.5 transition-colors sm:p-4"
+      className={`rounded-2xl border p-3.5 transition-colors sm:p-4 ${className || ''}`}
       style={{ background: 'linear-gradient(180deg,#0f1d33,#0c182b)', borderColor: tone || N.line, boxShadow: tone ? `0 0 0 1px ${tone}33, 0 0 22px ${tone}22` : 'none' }}
     >
       <header className="mb-2.5 flex items-center justify-between gap-2">
@@ -1327,7 +1466,7 @@ function IconBtn({ label, onClick, active, disabled, children }) {
   );
 }
 
-const TICK = { fill: '#647c9b', fontSize: 10 };
+const TICK = { fill: '#647c9b', fontSize: 10, style: SVG_TEXT };
 const TT_STYLE = { background: '#0b1628', border: '1px solid #1c3050', borderRadius: 10, fontSize: 12, color: '#e7eef8', padding: '6px 10px' };
 const TT_LABEL = { color: '#98abc4', marginBottom: 2 };
 const TT_ITEM = { color: '#e7eef8', padding: 0 };
@@ -1430,7 +1569,7 @@ function SimBar({ scenario, onRun }) {
   const lv = levelOf(cur.score);
   return (
     <div className="st-simbar border-t" style={{ background: 'rgba(5,12,24,0.97)', borderColor: N.line, boxShadow: '0 -10px 30px rgba(0,0,0,0.35)' }}>
-      <div className="flex h-full items-center gap-3 px-3 sm:px-5">
+      <div className="flex h-full items-center gap-3 px-2.5 sm:px-5">
         <div className="hidden shrink-0 items-center gap-2.5 xl:flex">
           <span className="grid h-9 w-9 place-items-center rounded-xl" style={{ background: 'rgba(56,189,248,0.14)', color: N.sky }}><Cpu size={18} /></span>
           <div className="leading-tight">
@@ -1438,21 +1577,24 @@ function SimBar({ scenario, onRun }) {
             <div className="text-xs" style={{ color: N.sub }}>심사위원 시연용 · 전 화면 연동</div>
           </div>
         </div>
-        <div className="st-scroll flex min-w-0 flex-1 gap-2 overflow-x-auto py-2" role="group" aria-label="시연 시나리오">
+        {/* 모바일은 2×2 그리드라 버튼 4개가 잘리지 않고, 데스크톱은 한 줄로 펼침 */}
+        <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 py-2 lg:flex lg:gap-2" role="group" aria-label="시연 시나리오">
           {SCENARIO_IDS.map((id) => {
             const S = SCENARIOS[id];
             const on = id === scenario;
             const Icon = S.icon;
             return (
               <button
-                key={id} type="button" onClick={() => onRun(id)} aria-pressed={on}
-                className="flex shrink-0 cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition-colors lg:flex-1"
-                style={{ minWidth: 172, borderColor: on ? S.color : N.line, background: on ? `${S.color}24` : '#0b172a' }}
+                key={id} type="button" onClick={() => onRun(id)} aria-pressed={on} aria-label={`시나리오 ${S.no} ${S.title}`}
+                className="flex min-w-0 cursor-pointer items-center gap-2 rounded-xl border px-2.5 py-1.5 text-left transition-colors lg:flex-1 lg:gap-2.5 lg:px-3 lg:py-2"
+                style={{ borderColor: on ? S.color : N.line, background: on ? `${S.color}24` : '#0b172a' }}
               >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white" style={{ background: on ? S.color : '#16263f' }}><Icon size={16} /></span>
+                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-white lg:h-8 lg:w-8" style={{ background: on ? S.color : '#16263f' }}><Icon size={15} /></span>
                 <span className="min-w-0">
                   <span className="block truncate text-xs font-semibold" style={{ color: on ? S.color : N.mute }}>시나리오 {S.no}</span>
-                  <span className="block truncate text-sm font-semibold text-white">{S.title}</span>
+                  <span className="block truncate text-sm font-semibold text-white">
+                    <span className="lg:hidden">{S.short}</span><span className="hidden lg:inline">{S.title}</span>
+                  </span>
                 </span>
               </button>
             );
@@ -1492,20 +1634,86 @@ function TwinLegend() {
   );
 }
 
-function ZoneInfo({ zone, status, note }) {
+function ResultBadge({ r, full }) {
+  const L = LV[RESULT_TONE[r]];
+  return <span className="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-bold" style={{ background: L.bg, color: L.text }}>{full ? RESULT_FULL[r] : r}</span>;
+}
+
+/* 구역 클릭 시: 모의데이터의 실제 과거 지적 사례 + 이를 반영한 AI 사전 위험도 */
+function ZoneHistory({ zone, onOpenAnalysis }) {
+  const key = profileKeyOf(zone);
+  const r = preRisk(key);
+  const lv = preLevel(r.score);
+  const shown = [];
+  r.cases.forEach((c) => { if (shown.length < 3 && !shown.some((s) => s.issue === c.issue)) shown.push(c); });
+  const times = (issue) => r.cases.filter((c) => c.issue === issue).length;
+  return (
+    <div className="mt-2.5 border-t pt-2.5" style={{ borderColor: N.line }}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold" style={{ color: '#c7d7ea' }}><Sparkles size={13} className="shrink-0" style={{ color: N.sky }} />AI 사전 위험도 · 점검 모의데이터</span>
+        <span className="st-num shrink-0 text-sm font-bold" style={{ color: LV[lv].text }}>{r.score}점 · {PRE_LABEL[lv]}</span>
+      </div>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full" style={{ background: '#13243e' }}>
+        <div className="h-full rounded-full" style={{ width: `${r.score}%`, background: LV[lv].color }} />
+      </div>
+      {key ? (
+        <>
+          <div className="st-keep mt-1.5 text-xs" style={{ color: N.sub }}>과거 지적 {r.cases.length}건(불량 {r.bad}·주의 {r.caution}) · 반복 지적 {r.repeat}종 · 최근 90일 {r.recent}건</div>
+          <div className="st-keep mt-0.5 text-xs" style={{ color: N.mute }}>연계 기준: {basisText(r)}</div>
+          <ul className="mt-2 space-y-1.5">
+            {shown.map((c) => (
+              <li key={c.id} className="rounded-lg px-2 py-1.5 text-xs" style={{ background: '#0b1729' }}>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <ResultBadge r={c.result} />
+                  <span className="st-num shrink-0" style={{ color: N.mute }}>{c.date}</span>
+                  <span className="truncate" style={{ color: N.mute }}>{c.facility.replace(/^국립/, '')}</span>
+                </div>
+                <div className="st-keep mt-1 font-semibold text-white">
+                  {c.issue}{times(c.issue) > 1 && <span className="ml-1 rounded px-1 text-xs font-semibold" style={{ background: 'rgba(245,158,11,0.16)', color: '#fcd34d' }}>{times(c.issue)}회 반복</span>}
+                </div>
+                <div className="st-keep mt-0.5" style={{ color: '#86efac' }}>조치: {c.action} · {c.done}</div>
+              </li>
+            ))}
+          </ul>
+          {onOpenAnalysis && (
+            <button
+              type="button" onClick={() => onOpenAnalysis(key)}
+              className="mt-2 flex w-full cursor-pointer items-center justify-center gap-1 rounded-lg border py-1.5 text-xs font-semibold"
+              style={{ borderColor: 'rgba(56,189,248,0.45)', color: '#7dd3fc', background: 'rgba(56,189,248,0.08)' }}
+            >
+              분석 화면에서 관련 이력 {r.cases.length}건 보기<ArrowUpRight size={13} />
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="st-keep mt-1.5 text-xs" style={{ color: N.mute }}>이 구역 유형과 연계된 지적 이력이 모의데이터에 없어 기본 점수로 표시합니다.</div>
+      )}
+    </div>
+  );
+}
+
+function ZoneInfo({ zone, status, note, selected, onClose, onOpenAnalysis }) {
   if (!zone) {
     return (
       <div className="flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs" style={{ background: 'rgba(9,19,36,0.88)', borderColor: N.line, color: N.sub }}>
-        <Info size={13} className="shrink-0" />구역을 누르면 상세 정보<span className="hidden sm:inline"> · 전체 보기에서 층을 누르면 내부 보기</span>
+        <Info size={13} className="shrink-0" />구역을 누르면 과거 지적 이력·AI 사전 위험도<span className="hidden sm:inline"> · 전체 보기에서 층을 누르면 내부 보기</span>
       </div>
     );
   }
   const sensors = zoneSensors(zone);
   return (
-    <div className="rounded-xl border p-3" style={{ width: 280, maxWidth: '100%', background: 'rgba(9,19,36,0.94)', borderColor: status === 'safe' ? 'rgba(34,211,238,0.5)' : LV[status].color }}>
+    <div
+      className="st-scroll overflow-y-auto rounded-xl border p-3"
+      style={{ width: selected ? 320 : 280, maxWidth: '100%', maxHeight: selected ? 'min(370px, 55vh)' : undefined, background: 'rgba(9,19,36,0.95)', borderColor: status === 'safe' ? 'rgba(34,211,238,0.5)' : LV[status].color }}
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="truncate text-sm font-semibold text-white">{zone.floor} · {zone.name}</div>
-        <StatusChip level={status} />
+        <div className="flex shrink-0 items-center gap-1">
+          <StatusChip level={status} />
+          {selected && onClose && (
+            <button type="button" aria-label="구역 정보 닫기" onClick={onClose} className="grid h-7 w-7 cursor-pointer place-items-center rounded-full hover:bg-white/10" style={{ color: N.sub }}><X size={14} /></button>
+          )}
+        </div>
       </div>
       <div className="mt-1 text-xs" style={{ color: N.sub }}>{TYPE_LABEL[zone.type]}{isBlind(zone) ? ' · CCTV 사각지대' : ' · 일반 구역'}</div>
       {note && <div className="mt-1.5 text-xs font-semibold" style={{ color: LV[status].text }}>{note}</div>}
@@ -1518,6 +1726,9 @@ function ZoneInfo({ zone, status, note }) {
           ))
           : <span className="text-xs" style={{ color: N.mute }}>{zone.type === 'room' ? '객실 내부 미설치 · 복도·공용부 우선 배치' : '센서 미설치 구역'}</span>}
       </div>
+      {selected
+        ? <ZoneHistory zone={zone} onOpenAnalysis={onOpenAnalysis} />
+        : <div className="mt-2 text-xs" style={{ color: N.mute }}>누르면 과거 지적 이력과 AI 사전 위험도를 봅니다</div>}
     </div>
   );
 }
@@ -1603,7 +1814,7 @@ function AdvisoryPopup({ onDone }) {
   );
 }
 
-function TwinCard({ view, setView, exploded, setExploded, scenario, advisory, onAdvisoryDone, report }) {
+function TwinCard({ view, setView, exploded, setExploded, scenario, advisory, onAdvisoryDone, report, focus, onFocusDone, onOpenAnalysis }) {
   const S = SCENARIOS[scenario];
   const [mode3d, setMode3d] = useState(true);
   const [rot, setRot] = useState(0);
@@ -1613,6 +1824,7 @@ function TwinCard({ view, setView, exploded, setExploded, scenario, advisory, on
   const [selId, setSelId] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const [boxRef, size] = useElementSize();
+  const cardRef = useRef(null);
 
   useEffect(() => {
     if (!expanded) return undefined;
@@ -1628,6 +1840,19 @@ function TwinCard({ view, setView, exploded, setExploded, scenario, advisory, on
     if (z && !floorIds.includes(z.floor)) setSelId(null);
     setHoverId(null);
   }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 분석 화면의 '3D 보기' → 해당 층으로 이동해 구역을 선택(과거 지적 이력 패널이 열림)
+  useEffect(() => {
+    if (!focus) return;
+    const z = findZone(focus.zone);
+    if (z) { setView(z.floor); setSelId(z.id); }
+    if (onFocusDone) onFocusDone();
+    // 모바일·태블릿(1단 배치)에서는 트윈 카드가 화면에 보이도록 스크롤
+    requestAnimationFrame(() => {
+      const el = cardRef.current;
+      if (el && window.innerWidth < 1024) window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - 8) });
+    });
+  }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const gapT = useTween(isAll && exploded ? EXPLODED_GAP : FLOOR_H, 650);
   const f = isAll ? clamp((gapT - FLOOR_H) / (EXPLODED_GAP - FLOOR_H), 0, 1) : 1;
@@ -1685,1189 +1910,1560 @@ function TwinCard({ view, setView, exploded, setExploded, scenario, advisory, on
     <>
       {expanded && <div className="st-backdrop" onClick={() => setExpanded(false)} />}
       <section
+        ref={cardRef}
         className={`flex flex-col rounded-2xl border ${expanded ? 'st-expanded' : 'st-twin relative'}`}
         style={{ background: 'linear-gradient(180deg,#0f1d33,#0c182b)', borderColor: N.line, boxShadow: expanded ? '0 30px 80px rgba(0,0,0,0.6)' : 'none' }}
-      >
-        <header className="flex items-start justify-between gap-3 px-4 pt-4 sm:px-5">
-          <div className="min-w-0">
-            <h2 className="st-keep text-base font-semibold text-white sm:text-lg">실시간 건물 디지털 트윈 (청소년수련원)</h2>
-            <p className="mt-0.5 text-xs" style={{ color: N.sub }}>3층 숙소·교육동 · 구역 {ZONE_COUNT}개 · 비식별 센서 {SENSOR_TOTAL}개 · 시연용 가상 모델</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {counts.danger > 0 && <span className="hidden sm:inline-flex"><StatusChip level="danger" label={`위험 ${counts.danger}`} /></span>}
-            {counts.caution > 0 && <span className="hidden sm:inline-flex"><StatusChip level="caution" label={`주의 ${counts.caution}`} /></span>}
-            <button
-              type="button" onClick={() => setMode3d((v) => !v)} aria-pressed={mode3d} title="3D/2D 보기 전환"
-              className="flex h-10 cursor-pointer items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold"
-              style={{ background: '#0b172a', borderColor: N.line, color: '#dbeafe' }}
-            >
-              <Eye size={16} />{mode3d ? '3D' : '2D'}
-            </button>
-            <button
-              type="button" onClick={() => setExpanded((v) => !v)} aria-label={expanded ? '창 크기로 보기' : '크게 보기'} title={expanded ? '창 크기로 보기 (Esc)' : '크게 보기'}
-              className="grid h-10 w-10 cursor-pointer place-items-center rounded-xl border" style={{ background: '#0b172a', borderColor: N.line, color: '#dbeafe' }}
-            >
-              {expanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
-            </button>
-          </div>
-        </header>
-
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 pt-3 sm:px-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <div role="tablist" aria-label="층 선택" className="flex rounded-xl border p-1" style={{ background: '#0a1628', borderColor: N.line }}>
-              {TWIN_VIEWS.map((v) => {
-                const on = view === v.id;
-                const vWorst = v.id === 'all' ? null : FLOOR_MAP[v.id].zones.reduce((w, z) => (S.zones[z.id] === 'danger' || w === 'danger' ? 'danger' : S.zones[z.id] === 'caution' || w === 'caution' ? 'caution' : null), null);
-                return (
-                  <button
-                    key={v.id} type="button" role="tab" aria-selected={on} onClick={() => setView(v.id)}
-                    className="relative cursor-pointer rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors sm:px-3.5"
-                    style={on ? { background: '#1d4ed8', color: '#fff' } : { color: N.sub }}
-                  >
-                    {v.label}
-                    {vWorst && <span className="st-blink absolute right-1 top-1 h-1.5 w-1.5 rounded-full" style={{ background: LV[vWorst].color }} />}
-                  </button>
-                );
-              })}
+        >
+          <header className="flex items-start justify-between gap-3 px-4 pt-4 sm:px-5">
+            <div className="min-w-0">
+              <h2 className="st-keep text-base font-semibold text-white sm:text-lg">실시간 건물 디지털 트윈 (청소년수련원)</h2>
+              <p className="mt-0.5 text-xs" style={{ color: N.sub }}>3층 숙소·교육동 · 구역 {ZONE_COUNT}개 · 비식별 센서 {SENSOR_TOTAL}개 · 시연용 가상 모델</p>
             </div>
-            <button
-              type="button" role="switch" aria-checked={isAll && exploded} onClick={toggleExplode} disabled={!mode3d}
-              className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-              style={{ background: isAll && exploded ? 'rgba(37,99,235,0.25)' : '#0a1628', borderColor: isAll && exploded ? 'rgba(96,165,250,0.7)' : N.line, color: '#dbeafe' }}
-              title="층별 펼치기 (Exploded View)"
-            >
-              <Layers size={16} />층별 펼치기
-              <span className="relative inline-block h-5 w-9 rounded-full transition-colors" style={{ background: isAll && exploded ? '#3b82f6' : '#1e3354' }}>
-                <span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: isAll && exploded ? 18 : 2 }} />
-              </span>
-            </button>
-          </div>
-          <TwinLegend />
-        </div>
-
-        <div ref={boxRef} className="st-canvas relative m-3 min-h-0 flex-1 overflow-hidden rounded-xl border sm:m-4" style={{ borderColor: N.line }}>
-          {geo && (
-            <IsoSvg
-              geo={geo} theme="dash" layers={layers}
-              hoverId={hoverId} selId={selId} floorHover={isAll}
-              onHover={setHoverId} onSelect={select} onFloorPick={pick}
-            />
-          )}
-          {overlay}
-          {reportOverlay}
-          {offView && (
-            <button
-              type="button" onClick={() => setView(offView.floor)}
-              className="st-pop absolute left-1/2 top-3 z-20 flex -translate-x-1/2 cursor-pointer items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-semibold"
-              style={{ background: 'rgba(9,19,36,0.95)', borderColor: scenario === 'fire' ? '#ef4444' : '#f59e0b', color: scenario === 'fire' ? '#fecaca' : '#fde68a' }}
-            >
-              <AlertTriangle size={15} />{offView.floor} {offView.title} — {offView.floor} 보기<ChevronRight size={15} />
-            </button>
-          )}
-          {advisory && <AdvisoryPopup onDone={onAdvisoryDone} />}
-          <div className="absolute left-3 top-3 flex flex-row gap-2 sm:flex-col" style={{ top: advisory && narrow ? 190 : 12 }}>
-            <IconBtn label="시점 90° 회전" onClick={() => setRot((r) => (r + 1) % 4)} disabled={!mode3d}><RotateCw size={18} /></IconBtn>
-            <div className="relative">
-              <IconBtn label="레이어 설정" active={layerOpen} onClick={() => setLayerOpen((o) => !o)}><SlidersHorizontal size={18} /></IconBtn>
-              {layerOpen && (
-                <div className="absolute left-0 top-12 z-30 w-48 rounded-xl border p-1.5 sm:left-12 sm:top-0" style={{ background: 'rgba(9,19,36,0.97)', borderColor: N.line }}>
-                  {LAYER_OPTS.map((o) => (
-                    <label key={o.id} className="flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm hover:bg-white/5" style={{ color: N.text }}>
-                      <span>{o.label}</span>
-                      <input type="checkbox" className="h-4 w-4 accent-sky-400" checked={layers[o.id]} onChange={() => setLayers((l) => ({ ...l, [o.id]: !l[o.id] }))} />
-                    </label>
-                  ))}
-                </div>
-              )}
+            <div className="flex shrink-0 items-center gap-2">
+              {counts.danger > 0 && <span className="hidden sm:inline-flex"><StatusChip level="danger" label={`위험 ${counts.danger}`} /></span>}
+              {counts.caution > 0 && <span className="hidden sm:inline-flex"><StatusChip level="caution" label={`주의 ${counts.caution}`} /></span>}
+              <button
+                type="button" onClick={() => setMode3d((v) => !v)} aria-pressed={mode3d} title="3D/2D 보기 전환"
+                className="flex h-10 cursor-pointer items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold"
+                style={{ background: '#0b172a', borderColor: N.line, color: '#dbeafe' }}
+              >
+                <Eye size={16} />{mode3d ? '3D' : '2D'}
+              </button>
+              <button
+                type="button" onClick={() => setExpanded((v) => !v)} aria-label={expanded ? '창 크기로 보기' : '크게 보기'} title={expanded ? '창 크기로 보기 (Esc)' : '크게 보기'}
+                className="grid h-10 w-10 cursor-pointer place-items-center rounded-xl border" style={{ background: '#0b172a', borderColor: N.line, color: '#dbeafe' }}
+              >
+                {expanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+              </button>
             </div>
-          </div>
-          <div className="pointer-events-none absolute bottom-3 left-3 right-3 flex flex-wrap items-end justify-between gap-2">
-            <div className="pointer-events-auto"><ZoneInfo zone={activeZone} status={activeStatus} note={activeNote} /></div>
-            <div className="hidden rounded-lg px-2.5 py-1 text-xs sm:block" style={{ background: 'rgba(9,19,36,0.85)', color: N.sub }}>
-              {VIEW_KO[view]}{isAll ? (exploded ? ' · 층별 펼치기' : ' · 쌓아 보기') : ''} · {mode3d ? `3D ${theta}°` : '2D 평면'}
-            </div>
-          </div>
-        </div>
-      </section>
-    </>
-  );
-}
-
-function RadarPanel({ data, scenario, since }) {
-  const gid = useMemo(() => uid('radar'), []);
-  const last = data[data.length - 1];
-  const fire = scenario === 'fire';
-  const impact = scenario === 'impact';
-  const still = fire ? 10 + Math.floor(Math.max(0, Date.now() - since) / 1000) : 0;
-  const where = fire ? '2F 중앙계단 · 사각지대' : impact ? '2F 샤워실 앞 복도 · 사각지대' : '2F 숙소 복도 · 사각지대';
-  const color = fire ? '#f87171' : '#38bdf8';
-  return (
-    <Panel icon={Radio} title="mmWave 레이더" hint="실시간 생체신호" tone={fire ? '#ef4444' : undefined}>
-      <MetaRow where={where} level={fire ? 'danger' : 'safe'} label={fire ? '낙상 감지' : impact ? '정상 움직임' : '정상'} />
-      <div style={{ height: 112 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 4, right: 6, bottom: 0, left: 0 }}>
-            <defs>
-              <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity={0.45} />
-                <stop offset="100%" stopColor={color} stopOpacity={0.03} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke={N.grid} vertical={false} />
-            <XAxis dataKey="t" tick={TICK} tickLine={false} axisLine={false} minTickGap={56} interval="preserveStartEnd" />
-            <YAxis domain={[-250, 250]} ticks={[-250, 0, 250]} tick={TICK} tickLine={false} axisLine={false} width={36} />
-            <Tooltip contentStyle={TT_STYLE} labelStyle={TT_LABEL} itemStyle={TT_ITEM} formatter={(v) => [v, '반사 신호']} cursor={{ stroke: 'rgba(148,180,220,0.35)' }} isAnimationActive={false} />
-            <Area type="monotone" dataKey="v" stroke={color} strokeWidth={1.6} fill={`url(#${gid})`} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="mt-2 grid grid-cols-3 gap-2">
-        <Stat label="인체 고도" value={last.alt.toFixed(2)} unit="m" tone={fire ? LV.danger.text : undefined} />
-        <Stat label="움직임" value={fire ? '무동작' : last.walk ? '보행 감지' : '미세 움직임'} tone={fire ? LV.danger.text : undefined} />
-        <Stat label="무동작 지속" value={still} unit="초" tone={fire ? LV.danger.text : LV.safe.text} />
-      </div>
-    </Panel>
-  );
-}
-
-function SoundPanel({ data, scenario }) {
-  const last = data[data.length - 1];
-  const peak = data.reduce((m, d) => Math.max(m, d.db), 0);
-  const fire = scenario === 'fire';
-  const impact = scenario === 'impact';
-  const verdict = fire ? '비명·충격음' : impact ? '단순 충격음' : peak >= 85 ? '충격음 의심' : '평상 소음';
-  const level = fire ? 'danger' : impact ? 'caution' : 'safe';
-  return (
-    <Panel icon={AudioWaveform} title="음향 센서" hint="실시간 데시벨" tone={fire ? '#ef4444' : impact ? '#38bdf8' : undefined}>
-      <MetaRow where={fire ? '2F 중앙계단 · 사각지대' : '2F 공용 샤워실 · 사각지대'} level={level} label={fire ? '비명·충격음' : impact ? '충격음 감지' : '정상'} />
-      <div style={{ height: 104 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} barCategoryGap={1} margin={{ top: 4, right: 6, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke={N.grid} vertical={false} />
-            <XAxis dataKey="t" tick={TICK} tickLine={false} axisLine={false} minTickGap={56} interval="preserveStartEnd" />
-            <YAxis domain={[0, 120]} ticks={[0, 40, 85, 120]} tick={TICK} tickLine={false} axisLine={false} width={36} />
-            <ReferenceLine y={85} stroke="#ef4444" strokeDasharray="4 3" label={{ value: '충격음 기준 85dB', position: 'insideTopRight', fill: '#fca5a5', fontSize: 10 }} />
-            <Tooltip contentStyle={TT_STYLE} labelStyle={TT_LABEL} itemStyle={TT_ITEM} formatter={(v) => [`${v} dB`, '소리 세기']} cursor={{ fill: 'rgba(148,180,220,0.08)' }} isAnimationActive={false} />
-            <Bar dataKey="db" radius={[2, 2, 0, 0]} isAnimationActive={false}>
-              {data.map((d, i) => <Cell key={i} fill={d.db >= 85 ? '#ef4444' : d.db >= 60 ? '#f59e0b' : '#3b82f6'} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="mt-2 grid grid-cols-3 gap-2">
-        <Stat label="현재" value={last.db} unit="dB" />
-        <Stat label="최근 30초 최대" value={peak} unit="dB" tone={peak >= 85 ? LV.danger.text : undefined} />
-        <Stat label="판별" value={verdict} tone={LV[level].text} />
-      </div>
-      <p className="mt-2 text-xs" style={{ color: N.mute }}>대화를 녹음하지 않고 소리 세기·주파수 파형만 분석합니다.</p>
-    </Panel>
-  );
-}
-
-function WeatherWidget({ w }) {
-  const now = useTicker(60000);
-  const Icon = w.icon;
-  const rain = w.sky === '우천';
-  return (
-    <div className="mt-3 rounded-xl border p-3 transition-colors" style={{ background: rain ? 'linear-gradient(135deg,#132b4d,#0b182c)' : 'linear-gradient(135deg,#112440,#0b182c)', borderColor: rain ? 'rgba(56,189,248,0.5)' : N.line }}>
-      <div className="flex items-center gap-3">
-        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl" style={{ background: rain ? 'rgba(56,189,248,0.16)' : 'rgba(148,163,184,0.12)', color: rain ? '#7dd3fc' : '#cbd5e1' }}><Icon size={28} /></span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="text-xl font-bold text-white">{w.sky}</span>
-            <span className="st-num text-sm" style={{ color: N.sub }}>{w.temp.toFixed(1)}℃</span>
-          </div>
-          <div className="truncate text-xs" style={{ color: N.mute }}>기상청 실황(모의) · {pad2(kst(now).h)}:00 기준</div>
-        </div>
-        <div className="shrink-0 text-right">
-          <div className="text-xs" style={{ color: N.sub }}>습도</div>
-          <div className="st-num text-2xl font-bold" style={{ color: rain ? '#38bdf8' : '#7dd3fc' }}>{w.rh}%</div>
-        </div>
-      </div>
-      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
-        <span className="flex items-center gap-1.5 whitespace-nowrap" style={{ color: N.sub }}><Umbrella size={13} />강수확률 <b className="st-num font-semibold text-white">{w.rainProb}%</b></span>
-        <span className="flex items-center gap-1.5 whitespace-nowrap" style={{ color: N.sub }}><Droplets size={13} />강수량 <b className="st-num font-semibold text-white">{w.rain.toFixed(1)}mm</b></span>
-        <span className="flex items-center gap-1.5 whitespace-nowrap" style={{ color: N.sub }}><Wind size={13} />바람 <b className="st-num font-semibold text-white">{w.wind}m/s</b></span>
-      </div>
-    </div>
-  );
-}
-
-function DewPanel({ data, scenario }) {
-  const gid = useMemo(() => uid('rh'), []);
-  const last = data[data.length - 1];
-  const margin = last.floor - last.dew;
-  const rain = scenario === 'rain';
-  const lv = rain ? 'caution' : margin <= 0 ? 'danger' : margin <= 1 ? 'caution' : 'safe';
-  const fmt = (v, name) => [name === '습도' ? `${Math.round(v)}%` : `${Number(v).toFixed(1)}℃`, name];
-  return (
-    <Panel icon={Droplets} title="온습도·결로" hint="이슬점 vs 바닥온도" tone={rain ? '#f59e0b' : undefined}>
-      <MetaRow where="1F 야외 나무 데크" level={lv} label={lv === 'safe' ? '결로 없음' : lv === 'caution' ? '결로 주의' : '결로 발생'} />
-      <div style={{ height: 132 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 6, right: 0, bottom: 0, left: 0 }}>
-            <defs>
-              <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.32} />
-                <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke={N.grid} vertical={false} />
-            <XAxis dataKey="t" tick={TICK} tickLine={false} axisLine={false} minTickGap={56} interval="preserveStartEnd" />
-            <YAxis yAxisId="c" domain={[-4, 12]} ticks={[-4, 0, 4, 8, 12]} tick={TICK} tickLine={false} axisLine={false} width={36} tickFormatter={(v) => `${v}°`} />
-            <YAxis yAxisId="h" orientation="right" domain={[0, 100]} ticks={[0, 50, 100]} tick={TICK} tickLine={false} axisLine={false} width={34} tickFormatter={(v) => `${v}%`} />
-            <Tooltip contentStyle={TT_STYLE} labelStyle={TT_LABEL} itemStyle={TT_ITEM} formatter={fmt} cursor={{ stroke: 'rgba(148,180,220,0.35)' }} isAnimationActive={false} />
-            <Area yAxisId="h" type="monotone" dataKey="rh" name="습도" stroke="#3b82f6" strokeOpacity={0.55} strokeWidth={1} fill={`url(#${gid})`} dot={false} isAnimationActive={false} />
-            <Line yAxisId="c" type="monotone" dataKey="floor" name="바닥 표면 온도" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} />
-            <Line yAxisId="c" type="monotone" dataKey="dew" name="이슬점" stroke="#22d3ee" strokeWidth={2} dot={false} isAnimationActive={false} />
-            <Line yAxisId="c" type="monotone" dataKey="limit" name="결로 경계(이슬점+1℃)" stroke="#ef4444" strokeWidth={1.2} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs" style={{ color: N.sub }}>
-        <span className="flex items-center gap-1.5"><i className="inline-block h-0.5 w-3.5 rounded" style={{ background: '#f59e0b' }} />바닥 표면 온도</span>
-        <span className="flex items-center gap-1.5"><i className="inline-block h-0.5 w-3.5 rounded" style={{ background: '#22d3ee' }} />이슬점</span>
-        <span className="flex items-center gap-1.5"><i className="inline-block h-0.5 w-3.5 rounded" style={{ background: 'repeating-linear-gradient(90deg,#ef4444 0 3px,transparent 3px 5px)' }} />결로 경계</span>
-        <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-3.5 rounded-sm" style={{ background: 'rgba(59,130,246,0.35)' }} />데크 습도</span>
-      </div>
-      <div className="mt-2 grid grid-cols-3 gap-2">
-        <Stat label="바닥 표면" value={last.floor.toFixed(1)} unit="℃" tone="#fcd34d" />
-        <Stat label="이슬점" value={last.dew.toFixed(1)} unit="℃" tone="#67e8f9" />
-        <Stat label="결로 여유" value={margin.toFixed(1)} unit="℃" tone={LV[lv].text} />
-      </div>
-      <WeatherWidget w={SCENARIOS[scenario].weather} />
-    </Panel>
-  );
-}
-
-function RiskGauge({ score }) {
-  const lv = levelOf(score);
-  const cx = 100; const cy = 92; const r = 72; const sw = 13;
-  const pt = (v, rr = r) => { const a = Math.PI * (1 - v / 100); return [cx + rr * Math.cos(a), cy - rr * Math.sin(a)]; };
-  const arc = (v0, v1) => { const a = pt(v0); const b = pt(v1); return `M${a[0].toFixed(2)} ${a[1].toFixed(2)}A${r} ${r} 0 0 1 ${b[0].toFixed(2)} ${b[1].toFixed(2)}`; };
-  const m = pt(score);
-  return (
-    <svg viewBox="0 0 200 112" className="block w-full" style={{ maxWidth: 230 }} role="img" aria-label={`AI 종합 위험도 ${score}점, ${GRADE[lv]}`}>
-      <path d={arc(0, 49.4)} stroke="rgba(34,197,94,0.22)" strokeWidth={sw} fill="none" />
-      <path d={arc(50.6, 89.4)} stroke="rgba(245,158,11,0.22)" strokeWidth={sw} fill="none" />
-      <path d={arc(90.6, 100)} stroke="rgba(239,68,68,0.25)" strokeWidth={sw} fill="none" />
-      <path d={arc(0, Math.max(1, score))} stroke={LV[lv].color} strokeWidth={sw} strokeLinecap="round" fill="none" style={{ filter: `drop-shadow(0 0 6px ${LV[lv].color})` }} />
-      <circle cx={m[0]} cy={m[1]} r={sw / 2 + 2.5} fill="#0e1b30" stroke={LV[lv].color} strokeWidth="2.5" />
-      {[0, 50, 90, 100].map((v) => {
-        const q = pt(v, r + sw / 2 + 9);
-        return <text key={v} x={q[0]} y={q[1]} fontSize="9" fill={N.mute} textAnchor="middle" dominantBaseline="central">{v}</text>;
-      })}
-      <text x={cx} y={cy - 16} textAnchor="middle" fontSize="34" fontWeight="700" fill="#fff" style={{ fontVariantNumeric: 'tabular-nums' }}>{score}</text>
-      <text x={cx} y={cy + 6} textAnchor="middle" fontSize="11" fill={N.sub}>/ 100점</text>
-    </svg>
-  );
-}
-
-const RiskPanel = React.memo(function RiskPanel({ scenario }) {
-  const S = SCENARIOS[scenario];
-  const shown = Math.round(useTween(S.score, 900));
-  const lv = levelOf(shown);
-  const ck = S.check;
-  const tone = CHECK_TONE[ck.tone];
-  const CkIcon = ck.icon;
-  return (
-    <Panel icon={Gauge} title="AI 종합 위험도" hint="0~100점 · 교차 검증" tone={lv === 'safe' ? undefined : LV[lv].color}>
-      <div key={scenario} className="st-pop mb-3 flex items-start gap-2.5 rounded-xl border px-3 py-2.5" style={{ background: tone.bg, borderColor: tone.border }}>
-        <span className="mt-0.5 shrink-0" style={{ color: tone.fg }}><CkIcon size={18} /></span>
-        <div className="min-w-0">
-          <div className="text-xs font-semibold" style={{ color: N.sub }}>AI 교차 검증</div>
-          <div className="st-keep text-sm font-bold" style={{ color: tone.fg }}>{ck.title}</div>
-          <div className="st-keep mt-0.5 text-xs" style={{ color: N.sub }}>{ck.sub}</div>
-        </div>
-      </div>
-      <div className="grid items-center gap-3 sm:grid-cols-2">
-        <div className="flex flex-col items-center">
-          <RiskGauge score={shown} />
-          <div className="mt-1"><StatusChip level={lv} label={`${GRADE[lv]} 단계`} /></div>
-        </div>
-        <div className="space-y-2">
-          {Object.keys(FACTOR_LABEL).map((k) => {
-            const v = S.factors[k];
-            return (
-              <div key={k}>
-                <div className="mb-1 flex items-center justify-between text-xs">
-                  <span style={{ color: N.sub }}>{FACTOR_LABEL[k]}</span>
-                  <span className="st-num font-semibold text-white">{v}</span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full" style={{ background: '#13243e' }}>
-                  <div className="h-full rounded-full" style={{ width: `${Math.max(2, v)}%`, background: LV[levelOf(v)].color, transition: 'width .8s ease, background-color .8s ease' }} />
-                </div>
+          </header>
+  
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 pt-3 sm:px-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <div role="tablist" aria-label="층 선택" className="flex rounded-xl border p-1" style={{ background: '#0a1628', borderColor: N.line }}>
+                {TWIN_VIEWS.map((v) => {
+                  const on = view === v.id;
+                  const vWorst = v.id === 'all' ? null : FLOOR_MAP[v.id].zones.reduce((w, z) => (S.zones[z.id] === 'danger' || w === 'danger' ? 'danger' : S.zones[z.id] === 'caution' || w === 'caution' ? 'caution' : null), null);
+                  return (
+                    <button
+                      key={v.id} type="button" role="tab" aria-selected={on} onClick={() => setView(v.id)}
+                      className="relative cursor-pointer rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors sm:px-3.5"
+                      style={on ? { background: '#1d4ed8', color: '#fff' } : { color: N.sub }}
+                    >
+                      {v.label}
+                      {vWorst && <span className="st-blink absolute right-1 top-1 h-1.5 w-1.5 rounded-full" style={{ background: LV[vWorst].color }} />}
+                    </button>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
-      </div>
-      <p className="mt-3 text-xs" style={{ color: N.mute }}>Rule + ML 하이브리드 · 안전 0~49 · 주의 50~89 · 비상 90 이상</p>
-    </Panel>
-  );
-});
-
-const EventLog = React.memo(function EventLog({ log }) {
-  return (
-    <Panel icon={Siren} title="긴급 이벤트 로그" hint={`최근 ${log.length}건`}>
-      <ul className="st-scroll space-y-0.5 overflow-y-auto pr-1" style={{ maxHeight: 290 }}>
-        {log.map((e) => (
-          <li key={e.id} className="st-newlog grid items-start gap-x-2 rounded-lg px-1.5 py-1.5" style={{ gridTemplateColumns: 'auto auto minmax(0,1fr)', fontSize: 13 }}>
-            <span className="font-semibold" style={{ color: LOG_TAG[e.lv].color }}>[{LOG_TAG[e.lv].label}]</span>
-            <span className="st-num" style={{ color: N.mute }}>{hms(e.ts)}</span>
-            <span className="st-keep" style={{ color: e.lv === 'alarm' ? '#fecaca' : '#d5e1f0' }}>{e.text}</span>
-          </li>
-        ))}
-      </ul>
-    </Panel>
-  );
-});
-
-function AdminSidebar({ scenario, log }) {
-  const sim = useSim();
-  return (
-    <aside className="st-scroll min-h-0 space-y-3 lg:col-span-3 lg:overflow-y-auto lg:pr-1" aria-label="센서 모니터링">
-      <RadarPanel data={sim.radar} scenario={scenario} since={sim.since} />
-      <SoundPanel data={sim.sound} scenario={scenario} />
-      <DewPanel data={sim.dew} scenario={scenario} />
-      <RiskPanel scenario={scenario} />
-      <EventLog log={log} />
-    </aside>
-  );
-}
-
-function AdminDashboard(props) {
-  const { scenario, log } = props;
-  return (
-    <div className="st-dash grid grid-cols-1 gap-3 p-3 sm:gap-4 sm:p-4 lg:grid-cols-10 lg:grid-rows-1">
-      <div className="min-h-0 lg:col-span-7">
-        <TwinCard
-          view={props.view} setView={props.setView} exploded={props.exploded} setExploded={props.setExploded}
-          scenario={scenario} advisory={props.advisory} onAdvisoryDone={props.onAdvisoryDone} report={props.report}
-        />
-      </div>
-      <AdminSidebar scenario={scenario} log={log} />
-    </div>
-  );
-}
-
-/* ════════════════ 10. 모드 B: 청소년·인솔교사용 모바일 대피 앱 ════════════════ */
-const FW = 390; // 스마트폰 프레임 가로(px)
-const FH = 812;
-
-function PhoneFrame({ children }) {
-  const btn = { position: 'absolute', width: 3, borderRadius: 2, background: '#2a2e35' };
-  return (
-    <div className="relative" style={{ width: FW, height: FH, borderRadius: 58, padding: 10, background: 'linear-gradient(145deg,#3b4048,#16191e 45%,#2b2f36)', boxShadow: '0 40px 80px rgba(15,23,42,0.32), inset 0 0 0 1.5px rgba(255,255,255,0.08)' }}>
-      <span style={{ ...btn, left: -3, top: 150, height: 32 }} />
-      <span style={{ ...btn, left: -3, top: 200, height: 58 }} />
-      <span style={{ ...btn, left: -3, top: 268, height: 58 }} />
-      <span style={{ ...btn, right: -3, top: 220, height: 92 }} />
-      <div className="relative h-full w-full overflow-hidden bg-white" style={{ borderRadius: 48 }}>{children}</div>
-    </div>
-  );
-}
-
-function StatusBar() {
-  const now = useTicker(5000);
-  const p = kst(now);
-  return (
-    <div className="relative flex shrink-0 items-center justify-between px-7 font-semibold text-slate-900" style={{ height: 48, fontSize: 15 }}>
-      <span className="st-num">{p.h % 12 || 12}:{pad2(p.mi)}</span>
-      <span className="absolute left-1/2 top-2.5 -translate-x-1/2 rounded-full bg-black" style={{ width: 108, height: 30 }} />
-      <span className="flex items-center gap-1.5"><Signal size={16} strokeWidth={2.4} /><Wifi size={16} strokeWidth={2.4} /><BatteryFull size={22} /></span>
-    </div>
-  );
-}
-
-function Compass({ theta, k }) {
-  const t = (theta * Math.PI) / 180;
-  const ang = (Math.atan2(Math.sin(t), Math.cos(t) * k) * 180) / Math.PI;
-  return (
-    <div className="grid h-11 w-11 place-items-center rounded-full" style={{ background: 'rgba(17,21,27,0.88)', boxShadow: '0 4px 12px rgba(0,0,0,0.35)' }} title="나침반 (빨간 바늘이 북쪽)">
-      <svg width="34" height="34" viewBox="-17 -17 34 34" aria-hidden="true">
-        <circle r="15" fill="none" stroke="rgba(255,255,255,0.18)" />
-        {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
-          <line key={a} x1="0" y1="-15" x2="0" y2={a % 90 === 0 ? -12 : -13.5} stroke="rgba(255,255,255,0.45)" transform={`rotate(${a})`} />
-        ))}
-        <g transform={`rotate(${ang.toFixed(1)})`}>
-          <path d="M0 -12 L3.6 0 L-3.6 0Z" fill="#ef4444" />
-          <path d="M0 12 L3.6 0 L-3.6 0Z" fill="#e5e7eb" />
-          <circle r="1.6" fill="#111827" />
-        </g>
-      </svg>
-    </div>
-  );
-}
-
-function MapBtn({ label, onClick, active, children }) {
-  return (
-    <button
-      type="button" aria-label={label} title={label} onClick={onClick}
-      className="grid h-11 w-11 cursor-pointer place-items-center rounded-full text-slate-900"
-      style={{ background: active ? '#fff' : 'rgba(255,255,255,0.82)', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}
-    >
-      {children}
-    </button>
-  );
-}
-
-/* 바닥면에 투영한 3D 대피 경로 — 평시: 초록 점선 / 비상: 파란 화살표 리본(흐름·그려지기 애니메이션) */
-function RouteLayer({ geo, route, phase }) {
-  const fid = useMemo(() => uid('route'), []);
-  if (!route || route.pts.length < 2) return null;
-  const P = (x, y) => geo.toScreen(x, y, 0.12);
-  const poly = (arr) => arr.map(([x, y]) => { const q = P(x, y); return `${q[0].toFixed(1)},${q[1].toFixed(1)}`; }).join(' ');
-  const pts = route.pts;
-  const scr = pts.map(([x, y]) => P(x, y));
-  const d = scr.map((q, i) => `${i ? 'L' : 'M'}${q[0].toFixed(1)} ${q[1].toFixed(1)}`).join('');
-  const lenPx = scr.reduce((sum, q, i) => (i ? sum + Math.hypot(q[0] - scr[i - 1][0], q[1] - scr[i - 1][1]) : 0), 0);
-  const segs = [];
-  for (let i = 1; i < pts.length; i += 1) {
-    const a = pts[i - 1]; const b = pts[i];
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    segs.push({ a, b, L, u: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] });
-  }
-  const total = segs.reduce((m, sg) => m + sg.L, 0);
-  const at = (t) => {
-    let rem = t;
-    for (let i = 0; i < segs.length; i += 1) {
-      const sg = segs[i];
-      if (rem <= sg.L || i === segs.length - 1) {
-        const k = Math.min(rem, sg.L);
-        return { p: [sg.a[0] + sg.u[0] * k, sg.a[1] + sg.u[1] * k], u: sg.u };
-      }
-      rem -= sg.L;
-    }
-    return { p: pts[pts.length - 1], u: [1, 0] };
-  };
-  const arrow = (p, u, size) => {
-    const n = [-u[1], u[0]];
-    return poly([
-      [p[0] - u[0] * size * 0.55 + n[0] * size, p[1] - u[1] * size * 0.55 + n[1] * size],
-      [p[0] + u[0] * size * 0.95, p[1] + u[1] * size * 0.95],
-      [p[0] - u[0] * size * 0.55 - n[0] * size, p[1] - u[1] * size * 0.55 - n[1] * size],
-      [p[0] - u[0] * size * 0.05, p[1] - u[1] * size * 0.05],
-    ]);
-  };
-  const end = at(total);
-  const cls = phase === 'out' ? 'st-route-out' : 'st-route-in';
-  if (!route.emergency) {
-    return (
-      <g pointerEvents="none" className={cls}>
-        <path d={d} fill="none" stroke="#22c55e" strokeOpacity="0.24" strokeWidth="11" strokeLinecap="round" strokeLinejoin="round" />
-        <path d={d} fill="none" stroke="#4ade80" strokeWidth="4.4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="0.1 9" />
-        <polygon points={arrow(end.p, end.u, 0.62)} fill="#4ade80" stroke="#14532d" strokeWidth="1" />
-      </g>
-    );
-  }
-  const W = 0.58; // 화살표 리본 반폭(m)
-  const ribbon = segs.map((sg) => {
-    const n = [-sg.u[1], sg.u[0]];
-    const a = [sg.a[0] - sg.u[0] * W, sg.a[1] - sg.u[1] * W];
-    const b = [sg.b[0] + sg.u[0] * W, sg.b[1] + sg.u[1] * W];
-    return poly([[a[0] + n[0] * W, a[1] + n[1] * W], [b[0] + n[0] * W, b[1] + n[1] * W], [b[0] - n[0] * W, b[1] - n[1] * W], [a[0] - n[0] * W, a[1] - n[1] * W]]);
-  });
-  const chevrons = [];
-  for (let t = 1.1; t < total - 1.0; t += 1.3) { const q = at(t); chevrons.push(arrow(q.p, q.u, 0.42)); }
-  return (
-    <g pointerEvents="none" className={cls}>
-      <defs><filter id={fid} x="-25%" y="-25%" width="150%" height="150%"><feGaussianBlur stdDeviation="5" /></filter></defs>
-      <g filter={`url(#${fid})`} opacity="0.9">{ribbon.map((pp, i) => <polygon key={`g${i}`} points={pp} fill="#38bdf8" />)}</g>
-      <g opacity="0.6">{ribbon.map((pp, i) => <polygon key={`r${i}`} points={pp} fill="#0ea5e9" />)}</g>
-      <path d={d} fill="none" stroke="#bae6fd" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 9" className="st-flow" />
-      {chevrons.map((pp, i) => <polygon key={`c${i}`} points={pp} fill="#f0f9ff" className="st-chev" style={{ animationDelay: `${(i * 0.09).toFixed(2)}s` }} />)}
-      <polygon points={arrow(end.p, end.u, 0.72)} fill="#e0f2fe" stroke="#0284c7" strokeWidth="1.2" />
-      {phase !== 'out' && (
-        <path
-          d={d} fill="none" stroke="#ffffff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"
-          strokeDasharray={lenPx.toFixed(1)} className="st-draw" style={{ '--len': lenPx.toFixed(1) }}
-        />
-      )}
-    </g>
-  );
-}
-
-function HazardArea({ geo }) {
-  const [x, y, w, h] = HAZARD.area;
-  const pts = rectPts(x, y, w, h).map(([px, py]) => { const q = geo.toScreen(px, py, 0.08); return `${q[0].toFixed(1)},${q[1].toFixed(1)}`; }).join(' ');
-  return <polygon points={pts} fill="rgba(239,68,68,0.32)" stroke="#f87171" strokeWidth="1.4" strokeDasharray="4 3" className="st-glow-danger" pointerEvents="none" />;
-}
-
-function BlockedMark({ at }) {
-  const [x, y] = at;
-  return (
-    <g pointerEvents="none">
-      <circle cx={x} cy={y} r="21" fill="rgba(239,68,68,0.3)" className="st-blink" />
-      <circle cx={x} cy={y} r="14" fill="#dc2626" stroke="#fff" strokeWidth="2.5" />
-      <path d={`M${x - 5} ${y - 5}L${x + 5} ${y + 5}M${x + 5} ${y - 5}L${x - 5} ${y + 5}`} stroke="#fff" strokeWidth="3" strokeLinecap="round" />
-    </g>
-  );
-}
-
-function BlockBadge({ at, boxW }) {
-  const x = clamp(at[0], 62, boxW - 62);
-  return (
-    <div className="pointer-events-none absolute z-10" style={{ left: x, top: at[1] + 20, transform: 'translateX(-50%)' }}>
-      <span className="st-pop flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold text-white" style={{ background: '#dc2626', boxShadow: '0 0 0 2px rgba(255,255,255,0.92), 0 6px 14px rgba(0,0,0,0.35)' }}>
-        <X size={12} strokeWidth={3} />중앙계단 통제
-      </span>
-    </div>
-  );
-}
-
-function PinShape({ color, children }) {
-  return (
-    <svg width="30" height="38" viewBox="0 0 30 38" aria-hidden="true">
-      <path d="M15 37s13-14 13-22.5A13 13 0 0 0 2 14.5C2 23 15 37 15 37z" fill={color} stroke="#fff" strokeWidth="2" />
-      {children}
-    </svg>
-  );
-}
-
-function CurrentPin({ at, label, boxW }) {
-  const x = clamp(at[0], 46, boxW - 46);
-  return (
-    <div className="pointer-events-none absolute z-10" style={{ left: x, top: at[1], transform: 'translate(-50%,-100%)' }}>
-      <div className="flex flex-col items-center">
-        <div className="relative mb-1.5 whitespace-nowrap rounded-xl bg-white px-2.5 py-1 text-center text-xs font-bold leading-tight text-slate-900" style={{ boxShadow: '0 6px 16px rgba(0,0,0,0.35)' }}>
-          현재 위치<br /><span className="text-sm">{label}</span>
-          <span className="absolute left-1/2 top-full -translate-x-1/2" style={{ width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid #fff' }} />
-        </div>
-        <PinShape color="#2563eb"><circle cx="15" cy="14" r="5" fill="#fff" /></PinShape>
-      </div>
-      <span className="st-ping absolute rounded-full" style={{ left: '50%', bottom: -6, width: 24, height: 12, marginLeft: -12, border: '2px solid #60a5fa' }} />
-    </div>
-  );
-}
-
-function ExitPin({ at, label, color, boxW }) {
-  const x = clamp(at[0], 50, boxW - 50);
-  return (
-    <div className="pointer-events-none absolute z-10" style={{ left: x, top: at[1], transform: 'translate(-50%,-100%)' }}>
-      <div className="st-pop flex flex-col items-center">
-        <div className="mb-1 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-bold text-white" style={{ background: color, boxShadow: '0 6px 16px rgba(0,0,0,0.35)' }}>{label}</div>
-        <PinShape color={color}><g transform="translate(7.5 6.5)"><DoorOpen size={15} color="#fff" strokeWidth={2.4} /></g></PinShape>
-      </div>
-    </div>
-  );
-}
-
-function RouteCard({ route }) {
-  const em = route.emergency;
-  const color = em ? '#0284c7' : '#16a34a';
-  const Icon = em ? Navigation : DoorOpen;
-  return (
-    <div key={route.key} className="st-pop flex items-center gap-3 rounded-2xl bg-white px-3.5 py-2.5" style={{ boxShadow: '0 8px 20px rgba(0,0,0,0.3)', border: `1.5px solid ${em ? '#7dd3fc' : '#bbf7d0'}` }} aria-live="polite">
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ background: em ? '#e0f2fe' : '#dcfce7', color }}><Icon size={20} /></span>
-      <div className="min-w-0 flex-1">
-        <div className="text-xs font-semibold" style={{ color }}>{em ? '우회 대피 경로' : '가까운 대피로'}</div>
-        <div className="truncate text-sm font-bold text-slate-900">{route.target.label}</div>
-      </div>
-      <div className="flex shrink-0 items-end gap-2.5 text-right">
-        <div>
-          <div className="text-slate-500" style={{ fontSize: 10.5 }}>남은 거리</div>
-          <div className="st-num text-xl font-bold leading-none text-slate-900">{route.dist}<span className="ml-0.5 text-xs font-semibold text-slate-500">m</span></div>
-        </div>
-        <div className="h-8 w-px bg-slate-200" />
-        <div>
-          <div className="text-slate-500" style={{ fontSize: 10.5 }}>예상 소요</div>
-          <div className="st-num text-xl font-bold leading-none" style={{ color }}>{route.secs}<span className="ml-0.5 text-xs font-semibold text-slate-500">초</span></div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RouteMap({ mstate, zones, floor, setFloor, route, onCall }) {
-  const M = MOBILE_STATES[mstate];
-  const [boxRef, size] = useElementSize();
-  const [labels, setLabels] = useState(true);
-  const [voice, setVoice] = useState(false);
-  const [voiceNote, setVoiceNote] = useState(null);
-  const here = floor === NAV_FLOOR;
-  const geo = useIsoGeometry({
-    width: size.width, height: size.height, floorIds: [floor], mode3d: true, theta: MOBILE_VIEW.theta, k: MOBILE_VIEW.k, zs: 0.8,
-    theme: 'mobile', statusMap: zones, gap: 0, backH: 1.9, frontH: 0.9, intH: 1.6, furniture: false, labelsTopOnly: false,
-    pad: { l: 18, r: 18, t: 54, b: 186 }, labelMin: 10, labelMax: 12, labelK: 0.95, short: true, tags: false,
-  });
-  const blockedZone = route.blocked ? route.blocked.zone : null;
-  const mute = useMemo(() => (here ? [route.target.zone, blockedZone].filter(Boolean) : []), [here, route.target.zone, blockedZone]);
-  const layerState = useMemo(() => ({ labels }), [labels]);
-
-  // 경로가 바뀌면 이전 경로는 흐려지며 사라지고 새 경로가 그려짐
-  const prevRef = useRef(route);
-  const [leaving, setLeaving] = useState(null);
-  useEffect(() => {
-    const prev = prevRef.current;
-    if (prev.key === route.key) return undefined;
-    prevRef.current = route;
-    setLeaving(prev);
-    const t = setTimeout(() => setLeaving(null), 600);
-    return () => clearTimeout(t);
-  }, [route]);
-
-  useEffect(() => { stopSpeech(); setVoice(false); }, [mstate, floor, route.key]);
-  useEffect(() => {
-    loadKoVoice();
-    const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
-    if (synth && synth.addEventListener) synth.addEventListener('voiceschanged', loadKoVoice);
-    return () => {
-      if (synth && synth.removeEventListener) synth.removeEventListener('voiceschanged', loadKoVoice);
-      stopSpeech();
-    };
-  }, []);
-
-  const toggleVoice = () => {
-    if (voice) { stopSpeech(); setVoice(false); return; }
-    const res = speakKo(M.voice, () => setVoice(false));
-    setVoiceNote(res === 'ok' ? null : res);
-    setVoice(true);
-  };
-
-  const end = route.pts[route.pts.length - 1];
-  const stairs = [24.5, 13];
-
-  return (
-    <div ref={boxRef} className="absolute inset-0 overflow-hidden" style={{ background: 'radial-gradient(130% 90% at 50% 35%,#3a414c 0%,#282d35 62%,#1f242b 100%)' }}>
-      {geo && (
-        <IsoSvg geo={geo} theme="mobile" layers={layerState} mute={mute}>
-          {here && route.emergency && <HazardArea geo={geo} />}
-          {here && leaving && <RouteLayer key={`${leaving.key}-out`} geo={geo} route={leaving} phase="out" />}
-          {here && <RouteLayer key={route.key} geo={geo} route={route} phase="in" />}
-          {here && route.blocked && <BlockedMark at={geo.toScreen(stairs[0], stairs[1], 0.2)} />}
-        </IsoSvg>
-      )}
-      {geo && here && route.blocked && <BlockBadge at={geo.toScreen(stairs[0], stairs[1], 0.2)} boxW={size.width} />}
-      {geo && here && <ExitPin key={`x-${route.key}`} at={geo.toScreen(end[0], end[1], 0.2)} label={route.target.label} color={route.emergency ? '#16a34a' : '#15803d'} boxW={size.width} />}
-      {geo && here && <CurrentPin at={geo.toScreen(route.loc.x, route.loc.y, 0.2)} label={route.loc.short} boxW={size.width} />}
-
-      <div className="absolute inset-x-3 bottom-3 flex flex-col gap-2.5">
-        <div className="flex items-end justify-between">
-          <Compass theta={MOBILE_VIEW.theta} k={MOBILE_VIEW.k} />
-          <div className="flex gap-2">
-            <MapBtn label={labels ? '방 번호 숨기기' : '방 번호 보기'} active={labels} onClick={() => setLabels((v) => !v)}><Layers size={20} /></MapBtn>
-            <MapBtn label="다른 층 보기" onClick={() => setFloor(nextFloor(floor))}><span className="text-base font-bold">{floor}</span></MapBtn>
-          </div>
-        </div>
-        {voice && (
-          <div className="st-pop rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed text-white" style={{ background: 'rgba(15,23,42,0.92)' }} role="status">
-            <span className="mb-0.5 flex items-center gap-1.5 text-xs font-semibold" style={{ color: '#7dd3fc' }}><Volume2 size={13} />음성 안내</span>
-            {M.voice}
-            {voiceNote && (
-              <span className="mt-1 block text-xs" style={{ color: '#94a3b8' }}>
-                {voiceNote === 'unsupported' ? '이 브라우저는 음성 합성을 지원하지 않아 자막으로 안내합니다.' : '기기에 한국어 음성이 없으면 기본 음성이나 자막으로 안내합니다.'}
-              </span>
-            )}
-          </div>
-        )}
-        {here ? <RouteCard route={route} /> : (
-          <div className="flex items-center gap-3 rounded-2xl bg-white px-3.5 py-2.5" style={{ boxShadow: '0 8px 20px rgba(0,0,0,0.3)' }}>
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ background: '#dbeafe', color: '#2563eb' }}><MapPin size={20} /></span>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-bold text-slate-900">현재 위치는 {FLOOR_KO[NAV_FLOOR]} {route.loc.label}</div>
-              <div className="truncate text-xs text-slate-500">{FLOOR_KO[floor]} 비상구와 계단 위치를 보고 있습니다</div>
+              <button
+                type="button" role="switch" aria-checked={isAll && exploded} onClick={toggleExplode} disabled={!mode3d}
+                className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                style={{ background: isAll && exploded ? 'rgba(37,99,235,0.25)' : '#0a1628', borderColor: isAll && exploded ? 'rgba(96,165,250,0.7)' : N.line, color: '#dbeafe' }}
+                title="층별 펼치기 (Exploded View)"
+              >
+                <Layers size={16} />층별 펼치기
+                <span className="relative inline-block h-5 w-9 rounded-full transition-colors" style={{ background: isAll && exploded ? '#3b82f6' : '#1e3354' }}>
+                  <span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: isAll && exploded ? 18 : 2 }} />
+                </span>
+              </button>
             </div>
-            <button type="button" onClick={() => setFloor(NAV_FLOOR)} className="shrink-0 cursor-pointer rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white">내 위치</button>
+            <TwinLegend />
           </div>
-        )}
-        <div className="flex gap-2">
-          <button
-            type="button" onClick={toggleVoice} aria-pressed={voice}
-            className="flex h-12 min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white text-base font-bold text-slate-900"
-            style={{ boxShadow: '0 8px 20px rgba(0,0,0,0.3)' }}
-          >
-            {voice ? <span className="st-eq" style={{ color: RED }}><i /><i /><i /><i /></span> : <Mic size={20} />}
-            {voice ? '음성 안내 중지' : '음성 안내 시작'}
-          </button>
-          <button
-            type="button" onClick={onCall} aria-label="119 긴급 신고" title="119 긴급 신고"
-            className="flex h-12 shrink-0 cursor-pointer items-center gap-1.5 rounded-2xl px-4 text-base font-bold text-white"
-            style={{ background: RED, boxShadow: '0 8px 20px rgba(229,34,47,0.4)' }}
-          >
-            <PhoneCall size={18} />119
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AedMap() {
-  return (
-    <svg viewBox="0 0 320 124" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" role="img" aria-label="주변 AED 위치 지도">
-      <rect width="320" height="124" fill="#eef0ea" />
-      <path d="M0 0H92L56 124H0Z" fill="#d6ebcf" />
-      <path d="M252 0H320V64Z" fill="#d6ebcf" />
-      <g fill="#c6e3bd">
-        <circle cx="22" cy="30" r="7" /><circle cx="40" cy="72" r="9" /><circle cx="18" cy="104" r="8" /><circle cx="292" cy="18" r="8" />
-      </g>
-      <g fill="none" strokeLinecap="round">
-        <path d="M-10 96L330 62" stroke="#d6dae0" strokeWidth="15" />
-        <path d="M-10 96L330 62" stroke="#fff" strokeWidth="11" />
-        <path d="M140 -10L162 134" stroke="#d6dae0" strokeWidth="11" />
-        <path d="M140 -10L162 134" stroke="#fff" strokeWidth="7" />
-        <path d="M284 -10L312 134" stroke="#e3bd54" strokeWidth="12" />
-        <path d="M284 -10L312 134" stroke="#f7da82" strokeWidth="8" />
-      </g>
-      <g fill="#e1e4e8" stroke="#cfd4da" strokeWidth="1">
-        <rect x="66" y="10" width="52" height="26" rx="2" transform="rotate(-6 92 23)" />
-        <rect x="80" y="104" width="44" height="18" rx="2" transform="rotate(-6 102 113)" />
-        <rect x="236" y="88" width="40" height="24" rx="2" transform="rotate(-6 256 100)" />
-      </g>
-      <rect x="172" y="16" width="92" height="34" rx="3" fill="#dbe7f8" stroke="#8fb0de" strokeWidth="1.2" transform="rotate(-6 218 33)" />
-      <text x="232" y="37" fontSize="9" textAnchor="middle" fill="#3b5b8a" fontWeight="700" transform="rotate(-6 218 33)">숙소동</text>
-      <path d="M214 30 L192 40" stroke="#2563eb" strokeWidth="1.6" strokeDasharray="3 3" />
-      <circle cx="216" cy="29" r="8" fill="#3b82f6" opacity="0.2" />
-      <circle cx="216" cy="29" r="4.2" fill="#2563eb" stroke="#fff" strokeWidth="1.6" />
-      <g transform="translate(177 6)">
-        <path d="M13 40s12-13 12-21A12 12 0 0 0 1 19c0 8 12 21 12 21z" fill={RED} stroke="#fff" strokeWidth="1.8" />
-        <path d="M13 24.5c-3.8-2.8-5.2-4.9-3.5-6.6 1.2-1.2 2.8-.8 3.5.4.7-1.2 2.3-1.6 3.5-.4 1.7 1.7.3 3.8-3.5 6.6z" fill="#fff" />
-        <path d="M13.5 17.4l-1.8 3.2h1.6l-.9 2.6 2.2-3.4h-1.6z" fill={RED} />
-      </g>
-    </svg>
-  );
-}
-
-function ManualView({ onCall, loc }) {
-  const [open, setOpen] = useState(null);
-  return (
-    <div className="absolute inset-0" style={{ background: '#f2f4f7' }}>
-      <div className="st-scroll absolute inset-0 overflow-y-auto px-4 pt-4" style={{ paddingBottom: 92 }}>
-        <h2 className="text-2xl font-bold tracking-tight text-slate-900">초동대응 매뉴얼</h2>
-        <p className="mt-1 text-sm text-slate-500">카드를 누르면 상황별 3단계 행동 요령이 열립니다</p>
-        <div className="mt-4 space-y-3">
-          {MANUALS.map((m) => {
-            const Icon = m.icon;
-            const on = open === m.id;
-            return (
-              <div key={m.id} className="overflow-hidden rounded-2xl bg-white" style={{ boxShadow: CARD_SHADOW }}>
-                <button type="button" onClick={() => setOpen(on ? null : m.id)} aria-expanded={on} className="flex w-full cursor-pointer items-center gap-3.5 p-4 text-left">
-                  <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl" style={{ background: m.tint, color: m.color }}><Icon size={30} /></span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-lg font-bold text-slate-900">{m.no}. {m.title}</span>
-                    <span className="st-keep mt-0.5 block text-sm text-slate-500">{m.summary}</span>
-                  </span>
-                  <ChevronDown size={18} className={`shrink-0 text-slate-400 transition-transform ${on ? 'rotate-180' : ''}`} />
-                </button>
-                {on && (
-                  <ol className="space-y-2.5 border-t border-slate-100 px-4 pb-4 pt-3">
-                    {m.steps.map((s, i) => (
-                      <li key={s} className="flex gap-2.5 text-sm text-slate-700">
-                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-bold text-white" style={{ background: m.color }}>{i + 1}</span>
-                        <span className="st-keep pt-0.5 leading-snug">{s}</span>
-                      </li>
+  
+          <div ref={boxRef} className="st-canvas relative m-3 min-h-0 flex-1 overflow-hidden rounded-xl border sm:m-4" style={{ borderColor: N.line }}>
+            {geo && (
+              <IsoSvg
+                geo={geo} theme="dash" layers={layers}
+                hoverId={hoverId} selId={selId} floorHover={isAll}
+                onHover={setHoverId} onSelect={select} onFloorPick={pick}
+              />
+            )}
+            {overlay}
+            {reportOverlay}
+            {offView && (
+              <button
+                type="button" onClick={() => setView(offView.floor)}
+                className="st-pop absolute left-1/2 top-3 z-20 flex -translate-x-1/2 cursor-pointer items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-semibold"
+                style={{ background: 'rgba(9,19,36,0.95)', borderColor: scenario === 'fire' ? '#ef4444' : '#f59e0b', color: scenario === 'fire' ? '#fecaca' : '#fde68a' }}
+              >
+                <AlertTriangle size={15} />{offView.floor} {offView.title} — {offView.floor} 보기<ChevronRight size={15} />
+              </button>
+            )}
+            {advisory && <AdvisoryPopup onDone={onAdvisoryDone} />}
+            <div className="absolute left-3 top-3 flex flex-row gap-2 sm:flex-col" style={{ top: advisory && narrow ? 190 : 12 }}>
+              <IconBtn label="시점 90° 회전" onClick={() => setRot((r) => (r + 1) % 4)} disabled={!mode3d}><RotateCw size={18} /></IconBtn>
+              <div className="relative">
+                <IconBtn label="레이어 설정" active={layerOpen} onClick={() => setLayerOpen((o) => !o)}><SlidersHorizontal size={18} /></IconBtn>
+                {layerOpen && (
+                  <div className="absolute left-0 top-12 z-30 w-48 rounded-xl border p-1.5 sm:left-12 sm:top-0" style={{ background: 'rgba(9,19,36,0.97)', borderColor: N.line }}>
+                    {LAYER_OPTS.map((o) => (
+                      <label key={o.id} className="flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm hover:bg-white/5" style={{ color: N.text }}>
+                        <span>{o.label}</span>
+                        <input type="checkbox" className="h-4 w-4 accent-sky-400" checked={layers[o.id]} onChange={() => setLayers((l) => ({ ...l, [o.id]: !l[o.id] }))} />
+                      </label>
                     ))}
-                  </ol>
+                  </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-        <div className="mt-3 overflow-hidden rounded-2xl bg-white" style={{ boxShadow: CARD_SHADOW }}>
-          <div className="flex items-center justify-between px-4 pt-3.5">
-            <h3 className="text-base font-bold text-slate-900">주변 AED 위치</h3>
-            <span className="text-xs font-semibold" style={{ color: RED }}>가장 가까운 1대</span>
-          </div>
-          <div className="mx-4 mt-2.5 overflow-hidden rounded-xl" style={{ height: 124 }}><AedMap /></div>
-          <div className="flex items-start gap-3 px-4 py-3.5">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full" style={{ background: '#fee2e2', color: RED }}><HeartPulse size={18} /></span>
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-slate-900">1층 로비 안내데스크 옆</div>
-              <div className="st-keep text-xs text-slate-500">{loc.label}에서 계단으로 1층 이동 · 1층 보건실에도 1대 비치</div>
+            </div>
+            <div className="pointer-events-none absolute bottom-3 left-3 right-3 flex flex-wrap items-end justify-between gap-2">
+              <div className="pointer-events-auto min-w-0 max-w-full">
+                <ZoneInfo
+                  zone={activeZone} status={activeStatus} note={activeNote}
+                  selected={Boolean(selId && activeZone && activeZone.id === selId)} onClose={() => setSelId(null)} onOpenAnalysis={onOpenAnalysis}
+                />
+              </div>
+              <div className="hidden rounded-lg px-2.5 py-1 text-xs sm:block" style={{ background: 'rgba(9,19,36,0.85)', color: N.sub }}>
+                {VIEW_KO[view]}{isAll ? (exploded ? ' · 층별 펼치기' : ' · 쌓아 보기') : ''} · {mode3d ? `3D ${theta}°` : '2D 평면'}
+              </div>
             </div>
           </div>
+        </section>
+      </>
+    );
+  }
+  
+  function RadarPanel({ data, scenario, since }) {
+    const gid = useMemo(() => uid('radar'), []);
+    const last = data[data.length - 1];
+    const fire = scenario === 'fire';
+    const impact = scenario === 'impact';
+    const still = fire ? 10 + Math.floor(Math.max(0, Date.now() - since) / 1000) : 0;
+    const where = fire ? '2F 중앙계단 · 사각지대' : impact ? '2F 샤워실 앞 복도 · 사각지대' : '2F 숙소 복도 · 사각지대';
+    const color = fire ? '#f87171' : '#38bdf8';
+    return (
+      <Panel icon={Radio} title="mmWave 레이더" hint="실시간 생체신호" tone={fire ? '#ef4444' : undefined}>
+        <MetaRow where={where} level={fire ? 'danger' : 'safe'} label={fire ? '낙상 감지' : impact ? '정상 움직임' : '정상'} />
+        <div style={{ height: 112 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 4, right: 6, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity={0.45} />
+                  <stop offset="100%" stopColor={color} stopOpacity={0.03} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={N.grid} vertical={false} />
+              <XAxis dataKey="t" tick={TICK} tickLine={false} axisLine={false} minTickGap={56} interval="preserveStartEnd" />
+              <YAxis domain={[-250, 250]} ticks={[-250, 0, 250]} tick={TICK} tickLine={false} axisLine={false} width={36} />
+              <Tooltip contentStyle={TT_STYLE} labelStyle={TT_LABEL} itemStyle={TT_ITEM} formatter={(v) => [v, '반사 신호']} cursor={{ stroke: 'rgba(148,180,220,0.35)' }} isAnimationActive={false} />
+              <Area type="monotone" dataKey="v" stroke={color} strokeWidth={1.6} fill={`url(#${gid})`} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
-      </div>
-      <div className="absolute inset-x-0 bottom-0 px-4 pb-3 pt-6" style={{ background: 'linear-gradient(to top,#f2f4f7 58%,rgba(242,244,247,0))' }}>
-        <button
-          type="button" onClick={onCall}
-          className="flex h-14 w-full cursor-pointer items-center justify-center gap-2.5 rounded-2xl text-lg font-bold text-white"
-          style={{ background: RED, boxShadow: '0 8px 20px rgba(229,34,47,0.35)' }}
-        >
-          <PhoneCall size={22} />119 긴급 신고
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* 119 신고 접수 시뮬레이션 — 위치 좌표·센서 데이터 전송 확인 */
-function ReportModal({ loc, scenario, at, onClose }) {
-  const snap = useMemo(() => {
-    const r = SIM.radar[SIM.radar.length - 1];
-    const peak = SIM.sound.reduce((m, d) => Math.max(m, d.db), 0);
-    const still = scenario === 'fire' ? 10 + Math.floor(Math.max(0, at - SIM.since) / 1000) : 0;
-    return { alt: r ? r.alt : 1.16, peak, still };
-  }, [at, scenario]);
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  const rows = [
-    ['위치 좌표', `숙소동 2F · X ${loc.front[0].toFixed(1)}m · Y ${loc.front[1].toFixed(1)}m`],
-    ['측위', `${loc.tag} · 오차 ±2m`],
-    ['센서 데이터', `레이더 고도 ${snap.alt.toFixed(2)}m · 무동작 ${snap.still}초 · 음향 최대 ${snap.peak}dB`],
-    ['전송 시각', `${hms(at)} KST`],
-    ['함께 전달', '관제실 · 인솔교사'],
-  ];
-  return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.6)' }} onClick={onClose}>
-      <div
-        className="st-pop w-full rounded-3xl bg-white p-5 text-slate-900" style={{ boxShadow: '0 24px 60px rgba(0,0,0,0.4)' }}
-        onClick={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true" aria-label="119 신고 접수 시뮬레이션"
-      >
-        <div className="st-check mx-auto grid h-14 w-14 place-items-center rounded-full" style={{ background: '#dcfce7', color: '#16a34a' }}><Check size={30} strokeWidth={3} /></div>
-        <div className="mt-3 flex items-center justify-center gap-1.5 text-xs font-bold" style={{ color: RED }}><PhoneCall size={13} />119 긴급 신고</div>
-        <h3 className="mt-1 text-center text-lg font-bold">신고 접수 시뮬레이션</h3>
-        <p className="st-keep mt-2 text-center text-sm leading-relaxed text-slate-600">국립청소년수련원 {loc.report} 사각지대 위치 좌표 및 센서 데이터가 전송되었습니다</p>
-        <dl className="mt-4 space-y-1.5 rounded-2xl bg-slate-50 p-3.5 text-xs">
-          {rows.map(([k, v]) => (
-            <div key={k} className="flex justify-between gap-3">
-              <dt className="shrink-0 text-slate-500">{k}</dt>
-              <dd className="st-keep text-right font-semibold text-slate-900">{v}</dd>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <Stat label="인체 고도" value={last.alt.toFixed(2)} unit="m" tone={fire ? LV.danger.text : undefined} />
+          <Stat label="움직임" value={fire ? '무동작' : last.walk ? '보행 감지' : '미세 움직임'} tone={fire ? LV.danger.text : undefined} />
+          <Stat label="무동작 지속" value={still} unit="초" tone={fire ? LV.danger.text : LV.safe.text} />
+        </div>
+      </Panel>
+    );
+  }
+  
+  function SoundPanel({ data, scenario }) {
+    const last = data[data.length - 1];
+    const peak = data.reduce((m, d) => Math.max(m, d.db), 0);
+    const fire = scenario === 'fire';
+    const impact = scenario === 'impact';
+    const verdict = fire ? '비명·충격음' : impact ? '단순 충격음' : peak >= 85 ? '충격음 의심' : '평상 소음';
+    const level = fire ? 'danger' : impact ? 'caution' : 'safe';
+    return (
+      <Panel icon={AudioWaveform} title="음향 센서" hint="실시간 데시벨" tone={fire ? '#ef4444' : impact ? '#38bdf8' : undefined}>
+        <MetaRow where={fire ? '2F 중앙계단 · 사각지대' : '2F 공용 샤워실 · 사각지대'} level={level} label={fire ? '비명·충격음' : impact ? '충격음 감지' : '정상'} />
+        <div style={{ height: 104 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} barCategoryGap={1} margin={{ top: 4, right: 6, bottom: 0, left: 0 }}>
+              <CartesianGrid stroke={N.grid} vertical={false} />
+              <XAxis dataKey="t" tick={TICK} tickLine={false} axisLine={false} minTickGap={56} interval="preserveStartEnd" />
+              <YAxis domain={[0, 120]} ticks={[0, 40, 85, 120]} tick={TICK} tickLine={false} axisLine={false} width={36} />
+              <ReferenceLine y={85} stroke="#ef4444" strokeDasharray="4 3" label={{ value: '충격음 기준 85dB', position: 'insideTopRight', fill: '#fca5a5', fontSize: 10, style: SVG_TEXT }} />
+              <Tooltip contentStyle={TT_STYLE} labelStyle={TT_LABEL} itemStyle={TT_ITEM} formatter={(v) => [`${v} dB`, '소리 세기']} cursor={{ fill: 'rgba(148,180,220,0.08)' }} isAnimationActive={false} />
+              <Bar dataKey="db" radius={[2, 2, 0, 0]} isAnimationActive={false}>
+                {data.map((d, i) => <Cell key={i} fill={d.db >= 85 ? '#ef4444' : d.db >= 60 ? '#f59e0b' : '#3b82f6'} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <Stat label="현재" value={last.db} unit="dB" />
+          <Stat label="최근 30초 최대" value={peak} unit="dB" tone={peak >= 85 ? LV.danger.text : undefined} />
+          <Stat label="판별" value={verdict} tone={LV[level].text} />
+        </div>
+        <p className="mt-2 text-xs" style={{ color: N.mute }}>대화를 녹음하지 않고 소리 세기·주파수 파형만 분석합니다.</p>
+      </Panel>
+    );
+  }
+  
+  function WeatherWidget({ w }) {
+    const now = useTicker(60000);
+    const Icon = w.icon;
+    const rain = w.sky === '우천';
+    return (
+      <div className="mt-3 rounded-xl border p-3 transition-colors" style={{ background: rain ? 'linear-gradient(135deg,#132b4d,#0b182c)' : 'linear-gradient(135deg,#112440,#0b182c)', borderColor: rain ? 'rgba(56,189,248,0.5)' : N.line }}>
+        <div className="flex items-center gap-3">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl" style={{ background: rain ? 'rgba(56,189,248,0.16)' : 'rgba(148,163,184,0.12)', color: rain ? '#7dd3fc' : '#cbd5e1' }}><Icon size={28} /></span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xl font-bold text-white">{w.sky}</span>
+              <span className="st-num text-sm" style={{ color: N.sub }}>{w.temp.toFixed(1)}℃</span>
             </div>
-          ))}
-        </dl>
-        <p className="mt-3 text-center text-xs text-slate-400">시연용 화면입니다 · 실제 119 전화는 연결되지 않습니다</p>
-        <button type="button" onClick={onClose} className="mt-3 h-12 w-full cursor-pointer rounded-xl text-base font-bold text-white" style={{ background: '#0f172a' }}>확인</button>
-      </div>
-    </div>
-  );
-}
-
-function MenuSheet({ loc, onClose }) {
-  const SrcIcon = loc.src === 'qr' ? QrCode : Bluetooth;
-  return (
-    <div className="absolute inset-0 z-20" onClick={onClose}>
-      <div className="absolute right-3 w-64 rounded-2xl bg-white p-3.5 text-sm text-slate-700 ring-1 ring-black/5" style={{ top: 98, boxShadow: '0 16px 40px rgba(15,23,42,0.25)' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <span className="font-bold text-slate-900">내 위치 정보</span>
-          <button type="button" aria-label="닫기" onClick={onClose} className="grid h-8 w-8 cursor-pointer place-items-center rounded-full hover:bg-slate-100"><X size={16} /></button>
+            <div className="truncate text-xs" style={{ color: N.mute }}>기상청 실황(모의) · {pad2(kst(now).h)}:00 기준</div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="text-xs" style={{ color: N.sub }}>습도</div>
+            <div className="st-num text-2xl font-bold" style={{ color: rain ? '#38bdf8' : '#7dd3fc' }}>{w.rh}%</div>
+          </div>
         </div>
-        <div className="mt-2 flex items-start gap-2"><SrcIcon size={16} className="mt-0.5 shrink-0 text-blue-600" /><span className="st-keep">{loc.tag} 인식 · {FLOOR_KO[NAV_FLOOR]} {loc.label} (오차 ±2m)</span></div>
-        <div className="mt-2 flex items-start gap-2"><QrCode size={16} className="mt-0.5 shrink-0 text-slate-900" /><span className="st-keep">입소 안내 QR로 실행된 무설치 모바일 웹</span></div>
-      </div>
-    </div>
-  );
-}
-
-/* 출발 위치 선택 — BLE 비콘·QR 태그 인식을 흉내 낸 드롭다운 */
-function LocationPicker({ value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  const L = LOCATIONS[value];
-  const SrcIcon = L.src === 'qr' ? QrCode : Bluetooth;
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('pointerdown', onDown);
-    window.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('pointerdown', onDown); window.removeEventListener('keydown', onKey); };
-  }, [open]);
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} aria-label={`현재 위치 선택: ${L.label}`}
-        className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 py-1 pl-2 pr-1.5 text-left"
-      >
-        <SrcIcon size={14} className="shrink-0 text-blue-600" />
-        <span className="leading-tight">
-          <span className="block text-slate-500" style={{ fontSize: 10 }}>현재 위치</span>
-          <span className="block whitespace-nowrap text-xs font-bold text-slate-900">{L.label}</span>
-        </span>
-        <ChevronDown size={14} className={`shrink-0 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && (
-        <div role="menu" className="st-pop absolute right-0 top-full z-40 mt-1.5 w-60 rounded-2xl bg-white p-1.5 ring-1 ring-black/10" style={{ boxShadow: '0 16px 40px rgba(15,23,42,0.25)' }}>
-          <div className="px-2.5 pb-1.5 pt-1 text-slate-500" style={{ fontSize: 11 }}>BLE 비콘·QR 태그 위치 시뮬레이션</div>
-          {LOC_ORDER.map((id) => {
-            const o = LOCATIONS[id];
-            const I = o.src === 'qr' ? QrCode : Bluetooth;
-            const on = id === value;
-            return (
-              <button
-                key={id} type="button" role="menuitemradio" aria-checked={on} onClick={() => { onChange(id); setOpen(false); }}
-                className="flex w-full cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-slate-50" style={on ? { background: '#eff6ff' } : undefined}
-              >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg" style={{ background: on ? '#2563eb' : '#f1f5f9', color: on ? '#fff' : '#334155' }}><I size={15} /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-bold text-slate-900">{o.label}</span>
-                  <span className="block text-xs text-slate-500">{o.tag}</span>
-                </span>
-                {on && <Check size={16} className="shrink-0 text-blue-600" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const MTABS = [
-  { id: 'route', icon: Navigation, label: '3D 대피 경로' },
-  { id: 'manual', icon: BookOpen, label: '초동대응 매뉴얼' },
-];
-
-function MobileApp({ scenario, mstate, zones, tab, setTab, floor, setFloor, loc, setLoc, route, onReport }) {
-  const M = MOBILE_STATES[mstate];
-  const B = M.banner;
-  const BannerIcon = B.icon;
-  const L = LOCATIONS[loc];
-  const [menu, setMenu] = useState(false);
-  const [reportAt, setReportAt] = useState(null);
-  const openReport = () => { const now = Date.now(); setReportAt(now); onReport(loc, now); };
-  const closeReport = useCallback(() => setReportAt(null), []);
-  return (
-    <div className="relative flex h-full flex-col bg-white text-slate-900">
-      <StatusBar />
-      <div className="relative z-30 flex shrink-0 items-center justify-between gap-2 pl-4 pr-2" style={{ height: 50 }}>
-        <div className="flex min-w-0 items-center gap-1.5"><LogoMark size={24} tone="red" /><span className="text-lg font-bold tracking-tight">SafeTwin</span></div>
-        <div className="flex items-center gap-0.5">
-          <LocationPicker value={loc} onChange={setLoc} />
-          <button type="button" aria-label="메뉴" onClick={() => setMenu((v) => !v)} className="grid h-10 w-10 cursor-pointer place-items-center rounded-full hover:bg-slate-100"><Menu size={22} /></button>
+        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
+          <span className="flex items-center gap-1.5 whitespace-nowrap" style={{ color: N.sub }}><Umbrella size={13} />강수확률 <b className="st-num font-semibold text-white">{w.rainProb}%</b></span>
+          <span className="flex items-center gap-1.5 whitespace-nowrap" style={{ color: N.sub }}><Droplets size={13} />강수량 <b className="st-num font-semibold text-white">{w.rain.toFixed(1)}mm</b></span>
+          <span className="flex items-center gap-1.5 whitespace-nowrap" style={{ color: N.sub }}><Wind size={13} />바람 <b className="st-num font-semibold text-white">{w.wind}m/s</b></span>
         </div>
       </div>
-      <div key={mstate} className="st-pop flex shrink-0 items-center gap-3 px-4 py-2.5" style={{ background: B.bg, color: B.fg }} role="status" aria-live="polite">
-        <BannerIcon size={24} className={mstate === 'emergency' ? 'st-blink shrink-0' : 'shrink-0'} />
-        <div className="min-w-0 flex-1">
-          <div className="text-lg font-bold leading-tight">{B.title}</div>
-          <div className="truncate text-xs" style={{ opacity: 0.88 }}>{B.sub}</div>
+    );
+  }
+  
+  function DewPanel({ data, scenario }) {
+    const gid = useMemo(() => uid('rh'), []);
+    const last = data[data.length - 1];
+    const margin = last.floor - last.dew;
+    const rain = scenario === 'rain';
+    const lv = rain ? 'caution' : margin <= 0 ? 'danger' : margin <= 1 ? 'caution' : 'safe';
+    const fmt = (v, name) => [name === '습도' ? `${Math.round(v)}%` : `${Number(v).toFixed(1)}℃`, name];
+    return (
+      <Panel icon={Droplets} title="온습도·결로" hint="이슬점 vs 바닥온도" tone={rain ? '#f59e0b' : undefined}>
+        <MetaRow where="1F 야외 나무 데크" level={lv} label={lv === 'safe' ? '결로 없음' : lv === 'caution' ? '결로 주의' : '결로 발생'} />
+        <div style={{ height: 132 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={data} margin={{ top: 6, right: 0, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.32} />
+                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={N.grid} vertical={false} />
+              <XAxis dataKey="t" tick={TICK} tickLine={false} axisLine={false} minTickGap={56} interval="preserveStartEnd" />
+              <YAxis yAxisId="c" domain={[-4, 12]} ticks={[-4, 0, 4, 8, 12]} tick={TICK} tickLine={false} axisLine={false} width={36} tickFormatter={(v) => `${v}°`} />
+              <YAxis yAxisId="h" orientation="right" domain={[0, 100]} ticks={[0, 50, 100]} tick={TICK} tickLine={false} axisLine={false} width={34} tickFormatter={(v) => `${v}%`} />
+              <Tooltip contentStyle={TT_STYLE} labelStyle={TT_LABEL} itemStyle={TT_ITEM} formatter={fmt} cursor={{ stroke: 'rgba(148,180,220,0.35)' }} isAnimationActive={false} />
+              <Area yAxisId="h" type="monotone" dataKey="rh" name="습도" stroke="#3b82f6" strokeOpacity={0.55} strokeWidth={1} fill={`url(#${gid})`} dot={false} isAnimationActive={false} />
+              <Line yAxisId="c" type="monotone" dataKey="floor" name="바닥 표면 온도" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line yAxisId="c" type="monotone" dataKey="dew" name="이슬점" stroke="#22d3ee" strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line yAxisId="c" type="monotone" dataKey="limit" name="결로 경계(이슬점+1℃)" stroke="#ef4444" strokeWidth={1.2} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
-        <button
-          type="button" onClick={() => setFloor(nextFloor(floor))} aria-label="지도 층 바꾸기"
-          className="flex shrink-0 cursor-pointer items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-bold" style={{ background: 'rgba(255,255,255,0.2)', color: '#fff' }}
-        >
-          {FLOOR_KO[floor]} {floor}<ChevronsUpDown size={14} />
-        </button>
-      </div>
-      <div className="relative min-h-0 flex-1">
-        {tab === 'route'
-          ? <RouteMap mstate={mstate} zones={zones} floor={floor} setFloor={setFloor} route={route} onCall={openReport} />
-          : <ManualView onCall={openReport} loc={L} />}
-      </div>
-      <nav role="tablist" aria-label="앱 화면" className="grid shrink-0 grid-cols-2 border-t border-slate-200 bg-white">
-        {MTABS.map((t) => {
-          const on = tab === t.id;
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.id} type="button" role="tab" aria-selected={on} onClick={() => setTab(t.id)}
-              className="flex h-14 cursor-pointer flex-col items-center justify-center gap-0.5 text-xs font-semibold" style={{ color: on ? RED : '#94a3b8' }}
-            >
-              <Icon size={21} strokeWidth={on ? 2.4 : 2} />{t.label}
-            </button>
-          );
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs" style={{ color: N.sub }}>
+          <span className="flex items-center gap-1.5"><i className="inline-block h-0.5 w-3.5 rounded" style={{ background: '#f59e0b' }} />바닥 표면 온도</span>
+          <span className="flex items-center gap-1.5"><i className="inline-block h-0.5 w-3.5 rounded" style={{ background: '#22d3ee' }} />이슬점</span>
+          <span className="flex items-center gap-1.5"><i className="inline-block h-0.5 w-3.5 rounded" style={{ background: 'repeating-linear-gradient(90deg,#ef4444 0 3px,transparent 3px 5px)' }} />결로 경계</span>
+          <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-3.5 rounded-sm" style={{ background: 'rgba(59,130,246,0.35)' }} />데크 습도</span>
+        </div>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <Stat label="바닥 표면" value={last.floor.toFixed(1)} unit="℃" tone="#fcd34d" />
+          <Stat label="이슬점" value={last.dew.toFixed(1)} unit="℃" tone="#67e8f9" />
+          <Stat label="결로 여유" value={margin.toFixed(1)} unit="℃" tone={LV[lv].text} />
+        </div>
+        <WeatherWidget w={SCENARIOS[scenario].weather} />
+      </Panel>
+    );
+  }
+  
+  function RiskGauge({ score }) {
+    const lv = levelOf(score);
+    const cx = 100; const cy = 92; const r = 72; const sw = 13;
+    const pt = (v, rr = r) => { const a = Math.PI * (1 - v / 100); return [cx + rr * Math.cos(a), cy - rr * Math.sin(a)]; };
+    const arc = (v0, v1) => { const a = pt(v0); const b = pt(v1); return `M${a[0].toFixed(2)} ${a[1].toFixed(2)}A${r} ${r} 0 0 1 ${b[0].toFixed(2)} ${b[1].toFixed(2)}`; };
+    const m = pt(score);
+    return (
+      <svg viewBox="0 0 200 112" className="block w-full" style={{ maxWidth: 230 }} role="img" aria-label={`AI 종합 위험도 ${score}점, ${GRADE[lv]}`}>
+        <path d={arc(0, 49.4)} stroke="rgba(34,197,94,0.22)" strokeWidth={sw} fill="none" />
+        <path d={arc(50.6, 89.4)} stroke="rgba(245,158,11,0.22)" strokeWidth={sw} fill="none" />
+        <path d={arc(90.6, 100)} stroke="rgba(239,68,68,0.25)" strokeWidth={sw} fill="none" />
+        <path d={arc(0, Math.max(1, score))} stroke={LV[lv].color} strokeWidth={sw} strokeLinecap="round" fill="none" style={{ filter: `drop-shadow(0 0 6px ${LV[lv].color})` }} />
+        <circle cx={m[0]} cy={m[1]} r={sw / 2 + 2.5} fill="#0e1b30" stroke={LV[lv].color} strokeWidth="2.5" />
+        {[0, 50, 90, 100].map((v) => {
+          const q = pt(v, r + sw / 2 + 9);
+          return <text key={v} x={q[0]} y={q[1]} fontSize="9" fill={N.mute} textAnchor="middle" dominantBaseline="central" style={SVG_TEXT}>{v}</text>;
         })}
-      </nav>
-      <div className="flex shrink-0 items-start justify-center bg-white" style={{ height: 22 }}>
-        <span style={{ width: 128, height: 5, borderRadius: 3, background: '#111' }} />
-      </div>
-      {menu && <MenuSheet loc={L} onClose={() => setMenu(false)} />}
-      {reportAt && <ReportModal loc={L} scenario={scenario} at={reportAt} onClose={closeReport} />}
-    </div>
-  );
-}
-
-const FEATURES = [
-  { icon: QrCode, text: '입소 안내 QR·NFC 스캔으로 3초 안에 실행' },
-  { icon: Bluetooth, text: '복도 BLE 비콘으로 현재 위치 자동 인식' },
-  { icon: Navigation, text: '통제 구역을 피하는 3D 우회 대피 경로' },
-  { icon: BookOpen, text: '화재·낙상·응급 상황별 3단계 행동 카드' },
-];
-
-function MobileInfo() {
-  return (
-    <div className="hidden lg:flex lg:flex-col lg:justify-center">
-      <div className="rounded-3xl bg-white/75 p-6 ring-1 ring-slate-900/5" style={{ boxShadow: CARD_SHADOW }}>
-        <p className="text-sm font-semibold" style={{ color: RED }}>청소년·인솔교사용</p>
-        <h2 className="st-keep mt-1 text-2xl font-bold leading-snug text-slate-900">설치 없이 QR로 여는 모바일 대피 앱</h2>
-        <p className="st-keep mt-2 text-sm leading-relaxed text-slate-600">수련원 입소 안내문의 QR을 스캔하면 스마트폰 브라우저에서 바로 실행되는 모바일 웹(PWA)입니다.</p>
-        <ul className="mt-5 space-y-3">
-          {FEATURES.map((f) => {
-            const Icon = f.icon;
-            return (
-              <li key={f.text} className="flex items-start gap-3 text-sm text-slate-700">
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-900 text-white"><Icon size={16} /></span>
-                <span className="st-keep pt-1.5">{f.text}</span>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    </div>
-  );
-}
-
-function LinkPanel({ scenario, isLg, loc, setLoc, route, report }) {
-  const S = SCENARIOS[scenario];
-  const M = MOBILE_STATES[S.mobile];
-  const Icon = S.icon;
-  const L = LOCATIONS[loc];
-  return (
-    <div className="flex flex-col justify-center" style={{ order: isLg ? 0 : -1 }}>
-      <div className="rounded-3xl bg-white/80 p-4 ring-1 ring-slate-900/5 lg:p-5" style={{ boxShadow: CARD_SHADOW }}>
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-bold text-slate-900">관제 시스템 연동</h3>
-          <span className="flex items-center gap-1.5 text-xs font-semibold text-green-600"><span className="st-blink h-2 w-2 rounded-full bg-green-500" />실시간</span>
-        </div>
-        <div key={scenario} className="st-pop mt-3 flex items-center gap-3 rounded-2xl border px-3 py-2.5" style={{ borderColor: S.color, background: `${S.color}14` }}>
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white" style={{ background: S.color }}><Icon size={18} /></span>
+        <text x={cx} y={cy - 16} textAnchor="middle" fontSize="34" fontWeight="700" fill="#fff" style={{ ...SVG_TEXT, fontVariantNumeric: 'tabular-nums' }}>{score}</text>
+        <text x={cx} y={cy + 6} textAnchor="middle" fontSize="11" fill={N.sub} style={SVG_TEXT}>/ 100점</text>
+      </svg>
+    );
+  }
+  
+  const RiskPanel = React.memo(function RiskPanel({ scenario }) {
+    const S = SCENARIOS[scenario];
+    const shown = Math.round(useTween(S.score, 900));
+    const lv = levelOf(shown);
+    const ck = S.check;
+    const tone = CHECK_TONE[ck.tone];
+    const CkIcon = ck.icon;
+    return (
+      <Panel icon={Gauge} title="AI 종합 위험도" hint="0~100점 · 교차 검증" tone={lv === 'safe' ? undefined : LV[lv].color}>
+        <div key={scenario} className="st-pop mb-3 flex items-start gap-2.5 rounded-xl border px-3 py-2.5" style={{ background: tone.bg, borderColor: tone.border }}>
+          <span className="mt-0.5 shrink-0" style={{ color: tone.fg }}><CkIcon size={18} /></span>
           <div className="min-w-0">
-            <div className="text-xs text-slate-500">시나리오 {S.no} 수신</div>
-            <div className="truncate text-sm font-bold text-slate-900">{S.title}</div>
+            <div className="text-xs font-semibold" style={{ color: N.sub }}>AI 교차 검증</div>
+            <div className="st-keep text-sm font-bold" style={{ color: tone.fg }}>{ck.title}</div>
+            <div className="st-keep mt-0.5 text-xs" style={{ color: N.sub }}>{ck.sub}</div>
           </div>
         </div>
-        <div className="mt-4 hidden lg:block">
-          <div className="text-xs font-semibold text-slate-500">출발 위치 시뮬레이션 (BLE·QR)</div>
-          <div className="mt-2 grid grid-cols-1 gap-1.5">
-            {LOC_ORDER.map((id) => {
-              const o = LOCATIONS[id];
-              const on = id === loc;
-              const I = o.src === 'qr' ? QrCode : Bluetooth;
+        <div className="grid items-center gap-3 sm:grid-cols-2">
+          <div className="flex flex-col items-center">
+            <RiskGauge score={shown} />
+            <div className="mt-1"><StatusChip level={lv} label={`${GRADE[lv]} 단계`} /></div>
+          </div>
+          <div className="space-y-2">
+            {Object.keys(FACTOR_LABEL).map((k) => {
+              const v = S.factors[k];
               return (
-                <button
-                  key={id} type="button" onClick={() => setLoc(id)} aria-pressed={on}
-                  className="flex cursor-pointer items-center gap-2 rounded-xl border px-2.5 py-2 text-left text-sm transition-colors"
-                  style={{ borderColor: on ? '#2563eb' : '#e2e8f0', background: on ? '#eff6ff' : '#fff' }}
-                >
-                  <I size={15} color={on ? '#2563eb' : '#64748b'} />
-                  <span className="min-w-0 flex-1 truncate font-semibold text-slate-900">{o.label}</span>
-                  <span className="shrink-0 text-xs text-slate-400">{o.src === 'qr' ? 'QR' : 'BLE'}</span>
-                </button>
+                <div key={k}>
+                  <div className="mb-1 flex items-center justify-between text-xs">
+                    <span style={{ color: N.sub }}>{FACTOR_LABEL[k]}</span>
+                    <span className="st-num font-semibold text-white">{v}</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full" style={{ background: '#13243e' }}>
+                    <div className="h-full rounded-full" style={{ width: `${Math.max(2, v)}%`, background: LV[levelOf(v)].color, transition: 'width .8s ease, background-color .8s ease' }} />
+                  </div>
+                </div>
               );
             })}
           </div>
         </div>
-        <div className="mt-4 hidden space-y-2 border-t border-slate-200 pt-4 text-sm lg:block">
-          <div className="flex justify-between gap-2"><span className="text-slate-500">앱 상태</span><span className="font-semibold text-slate-900">{M.label} 배너</span></div>
-          <div className="flex justify-between gap-2"><span className="text-slate-500">대피 목표</span><span className="font-semibold text-slate-900">{route.target.label}</span></div>
-          <div className="flex justify-between gap-2"><span className="text-slate-500">남은 거리·시간</span><span className="st-num font-semibold text-slate-900">{route.dist}m · {route.secs}초</span></div>
-          <div className="flex justify-between gap-2"><span className="text-slate-500">측위</span><span className="font-semibold text-slate-900">{L.tag}</span></div>
-          <div className="flex justify-between gap-2"><span className="text-slate-500">최근 119 신고</span><span className="st-num font-semibold" style={{ color: report ? RED : '#0f172a' }}>{report ? `${hms(report.ts)} 접수` : '없음'}</span></div>
+        <p className="mt-3 text-xs" style={{ color: N.mute }}>Rule + ML 하이브리드 · 안전 0~49 · 주의 50~89 · 비상 90 이상</p>
+      </Panel>
+    );
+  });
+  
+  const EventLog = React.memo(function EventLog({ log }) {
+    return (
+      <Panel icon={Siren} title="긴급 이벤트 로그" hint={`최근 ${log.length}건`}>
+        <ul className="st-scroll space-y-0.5 overflow-y-auto pr-1" style={{ maxHeight: 290 }}>
+          {log.map((e) => (
+            <li key={e.id} className="st-newlog grid items-start gap-x-2 rounded-lg px-1.5 py-1.5" style={{ gridTemplateColumns: 'auto auto minmax(0,1fr)', fontSize: 13 }}>
+              <span className="font-semibold" style={{ color: LOG_TAG[e.lv].color }}>[{LOG_TAG[e.lv].label}]</span>
+              <span className="st-num" style={{ color: N.mute }}>{hms(e.ts)}</span>
+              <span className="st-keep" style={{ color: e.lv === 'alarm' ? '#fecaca' : '#d5e1f0' }}>{e.text}</span>
+            </li>
+          ))}
+        </ul>
+      </Panel>
+    );
+  });
+  
+  function AdminSidebar({ scenario, log }) {
+    const sim = useSim();
+    return (
+      <aside className="st-scroll min-h-0 space-y-3 lg:col-span-3 lg:overflow-y-auto lg:pr-1" aria-label="센서 모니터링">
+        <RadarPanel data={sim.radar} scenario={scenario} since={sim.since} />
+        <SoundPanel data={sim.sound} scenario={scenario} />
+        <DewPanel data={sim.dew} scenario={scenario} />
+        <RiskPanel scenario={scenario} />
+        <EventLog log={log} />
+      </aside>
+    );
+  }
+  
+  /* 관리자 화면 상단 탭: 3D 디지털 트윈 관제 ↔ 모의데이터 AI 분석 */
+  const ADMIN_TABS = [
+    { id: 'twin', icon: Layers, label: '3D 디지털 트윈 관제', short: '3D 트윈 관제' },
+    { id: 'analysis', icon: BarChart3, label: '모의데이터 AI 분석', short: '모의데이터 분석' },
+  ];
+  
+  function AdminTabs({ tab, setTab }) {
+    return (
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+        <div role="tablist" aria-label="관리자 화면 전환" className="flex w-full rounded-xl border p-1 sm:w-auto" style={{ background: N.panel, borderColor: N.line }}>
+          {ADMIN_TABS.map((t) => {
+            const on = tab === t.id;
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.id} type="button" role="tab" aria-selected={on} onClick={() => setTab(t.id)}
+                className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors sm:flex-none sm:px-4"
+                style={on ? { background: 'linear-gradient(135deg,#0ea5e9,#2563eb)', color: '#fff' } : { color: N.sub }}
+              >
+                <Icon size={16} className="shrink-0" />
+                <span className="truncate sm:hidden">{t.short}</span>
+                <span className="hidden sm:inline">{t.label}</span>
+                {t.id === 'analysis' && (
+                  <span className="hidden rounded-md px-1.5 py-0.5 text-xs sm:inline" style={{ background: on ? 'rgba(255,255,255,0.2)' : 'rgba(56,189,248,0.14)', color: on ? '#fff' : '#7dd3fc' }}>CSV {MOCK_STATS.rows}건</span>
+                )}
+              </button>
+            );
+          })}
         </div>
-        <p className="st-keep mt-3 text-xs text-slate-500">화면 아래 시뮬레이터 버튼을 누르면 이 앱 화면도 함께 바뀝니다.</p>
+        <span className="st-keep hidden text-xs md:inline" style={{ color: N.mute }}>
+          {tab === 'twin'
+            ? '구역을 누르면 점검 모의데이터의 과거 지적 이력과 AI 사전 위험도를 함께 보여 줍니다'
+            : `안전점검 CSV ${MOCK_STATS.rows}건 전체 집계 + 주의·불량 지적 ${MOCK_CASES.length}건 · 시연용 모의데이터`}
+        </span>
       </div>
-    </div>
-  );
+    );
+  }
+  
+  function AdminDashboard(props) {
+    const { scenario, log, tab, setTab } = props;
+    return (
+      <div className="st-dash flex flex-col gap-3 p-3 sm:gap-4 sm:p-4">
+        <AdminTabs tab={tab} setTab={setTab} />
+        {tab === 'analysis' ? (
+          <MockAnalysis preset={props.preset} setPreset={props.setPreset} onShowZone={props.onShowZone} />
+        ) : (
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-10 lg:grid-rows-1">
+            <div className="min-h-0 lg:col-span-7">
+              <TwinCard
+                view={props.view} setView={props.setView} exploded={props.exploded} setExploded={props.setExploded}
+                scenario={scenario} advisory={props.advisory} onAdvisoryDone={props.onAdvisoryDone} report={props.report}
+                focus={props.focus} onFocusDone={props.onFocusDone} onOpenAnalysis={props.onOpenAnalysis}
+              />
+            </div>
+            <AdminSidebar scenario={scenario} log={log} />
+          </div>
+        )}
+      </div>
+    );
+  }
+  
+  /* ════════════════ 9-1. 모의데이터 AI 분석 뷰 ════════════════ */
+  const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : 0);
+  const FIELD_ROWS = MOCK_STATS.byField
+    .map((f) => ({ ...f, flagged: f.caution + f.bad, rate: pct(f.caution + f.bad, f.total) }))
+    .sort((a, b) => b.flagged - a.flagged || b.bad - a.bad || b.rate - a.rate);
+  const FIELD_RATE = Object.fromEntries(FIELD_ROWS.map((f) => [f.field, f.rate]));
+  const FIELD_REC = {
+    가스설비: '가스 누설 경보기 연동 · 배관·자동절체기 월 1회 정밀 점검',
+    '건축·시설물': '미끄럼·낙상 구간을 SafeTwin 결로·미끄럼 센서(시나리오 2)로 상시 감시',
+    전기설비: '우천 전 실외 콘센트·분전반 사전 점검 체크리스트 운영',
+    수련활동장비: '모험시설 보호장구 사용 전 점검 · 교체 주기 관리',
+    '위생·급식': '냉장·소독 설비 온도·점등 기록 자동화',
+    '응급·보건': '구급함 소모품 유효기간 월별 알림',
+    소방안전: '소화전·비상구 앞 적치물 상시 순찰',
+  };
+  // 분야별 대표 지적사항: 불량을 먼저, 같은 등급은 최신순
+  const issuesOf = (field, n) => [...new Set(MOCK_CASES.filter((c) => c.field === field)
+    .sort((a, b) => (a.result === b.result ? 0 : a.result === '불량' ? -1 : 1)).map((c) => c.issue))].slice(0, n);
+  
+  function buildInsights() {
+    const topBad = [...FIELD_ROWS].sort((a, b) => b.bad - a.bad || b.rate - a.rate)[0];
+    const topRate = [...FIELD_ROWS].sort((a, b) => b.rate - a.rate || b.bad - a.bad)[0];
+    const rep = MOCK_STATS.repeat[0];
+    const repField = (MOCK_CASES.find((c) => c.issue === rep.issue) || {}).field;
+    const A = MOCK_STATS.action;
+    const badArea = [...MOCK_STATS.byArea].sort((a, b) => b.bad - a.bad || b.caution - a.caution)[0];
+    return [
+      { tone: 'danger', icon: Flame, title: `불량 최다 분야 · ${topBad.field}`, value: `불량 ${topBad.bad}건`, body: `점검 ${topBad.total}건 중 ${topBad.flagged}건 지적(${topBad.rate}%) — ${issuesOf(topBad.field, 2).join(', ')}`, rec: FIELD_REC[topBad.field] },
+      { tone: 'caution', icon: AlertTriangle, title: `지적률 최고 분야 · ${topRate.field}`, value: `${topRate.rate}%`, body: `점검 ${topRate.total}건 중 ${topRate.flagged}건 — ${issuesOf(topRate.field, 3).join(', ')}`, rec: FIELD_REC[topRate.field] },
+      { tone: 'caution', icon: RotateCw, title: `반복 지적 · ${repField}`, value: `${rep.n}회`, body: `‘${rep.issue}’가 가장 많이 반복 · 2회 이상 반복된 지적 ${MOCK_STATS.repeat.length}종`, rec: FIELD_REC[repField] },
+      { tone: 'safe', icon: ShieldCheck, title: '조치 이행', value: `${A.done}/${A.flagged}건`, body: `지적 전건 조치 완료 · 평균 ${A.avgDays}일 · 당일 조치 ${A.sameDay}건 · 최장 ${A.maxDays}일(불량 평균 ${A.badAvgDays}일)`, rec: `불량이 가장 많은 구역은 ${badArea.area}(${badArea.bad}건) — 해당 구역 점검 주기 단축 권고` },
+    ];
+  }
+  
+  function Kpi({ label, value, unit, sub, tone, wide }) {
+    return (
+      <div className={`min-w-0 rounded-xl border px-3 py-2.5 ${wide ? 'col-span-2 sm:col-span-1' : ''}`} style={{ background: 'rgba(10,22,40,0.8)', borderColor: N.line }}>
+        <div className="truncate text-xs" style={{ color: N.sub }}>{label}</div>
+        <div className="st-num mt-0.5 text-2xl font-bold" style={{ color: tone || '#fff' }}>{value}<span className="ml-0.5 text-sm font-semibold" style={{ color: N.sub }}>{unit}</span></div>
+        <div className="truncate text-xs" style={{ color: N.mute }}>{sub}</div>
+      </div>
+    );
+  }
+  
+  function AnalysisHeader() {
+    const S = MOCK_STATS;
+    const [ok, ca, bad] = S.result;
+    const dot = (d) => d.replace(/-/g, '.');
+    return (
+      <section className="rounded-2xl border p-4 sm:p-5" style={{ background: 'linear-gradient(135deg,#10223d,#0c182b)', borderColor: N.line }}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="st-keep text-lg font-bold text-white">국립청소년수련시설 안전점검 모의데이터 AI 분석</h2>
+            <p className="st-keep mt-0.5 text-xs" style={{ color: N.sub }}>
+              {dot(S.period[0])} ~ {dot(S.period[1])} · 시설 {S.facilities}곳 · {Object.entries(S.byType).map(([k, v]) => `${k} ${v}`).join(' · ')}
+            </p>
+          </div>
+          <span className="flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs" style={{ borderColor: 'rgba(56,189,248,0.4)', color: '#bae6fd', background: 'rgba(56,189,248,0.08)' }}>
+            <FileSpreadsheet size={14} />CSV {S.rows}행 집계 · 지적 사례 {MOCK_CASES.length}건 내장
+          </span>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          <Kpi label="총 점검" value={S.rows} unit="건" sub={`지적 ${S.action.flagged}건 · ${pct(S.action.flagged, S.rows)}%`} />
+          <Kpi label="양호" value={ok.n} unit="건" sub={`${pct(ok.n, S.rows)}%`} tone={LV.safe.text} />
+          <Kpi label="주의(경미)" value={ca.n} unit="건" sub={`${pct(ca.n, S.rows)}%`} tone={LV.caution.text} />
+          <Kpi label="불량(시정요구)" value={bad.n} unit="건" sub={`${pct(bad.n, S.rows)}%`} tone={LV.danger.text} />
+          <Kpi label="조치 완료" value={`${S.action.done}/${S.action.flagged}`} unit="건" sub={`평균 ${S.action.avgDays}일 · 최장 ${S.action.maxDays}일`} tone="#7dd3fc" wide />
+        </div>
+      </section>
+    );
+  }
+  
+  function ResultDonut() {
+    const total = MOCK_STATS.rows;
+    const data = MOCK_STATS.result.map((r) => ({ ...r, pct: pct(r.n, total) }));
+    const flagged = total - data[0].n;
+    return (
+      <Panel icon={ClipboardList} title="① 점검결과 분포" hint={`전체 ${total}건`} className="h-full">
+        <div className="flex flex-col items-center gap-4 sm:flex-row">
+          <div className="relative shrink-0" style={{ width: 188, height: 188 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={data} dataKey="n" nameKey="key" innerRadius={58} outerRadius={86} paddingAngle={2} startAngle={90} endAngle={-270} stroke="none" isAnimationActive={false}>
+                  {data.map((d) => <Cell key={d.key} fill={RESULT_COLOR[d.key]} />)}
+                </Pie>
+                <Tooltip contentStyle={TT_STYLE} labelStyle={TT_LABEL} itemStyle={TT_ITEM} formatter={(v, n) => [`${v}건 (${pct(v, total)}%)`, n]} isAnimationActive={false} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+              <div>
+                <div className="text-xs" style={{ color: N.sub }}>지적 비율</div>
+                <div className="st-num text-2xl font-bold text-white">{pct(flagged, total)}%</div>
+                <div className="st-num text-xs" style={{ color: N.mute }}>{flagged}/{total}건</div>
+              </div>
+            </div>
+          </div>
+          <ul className="w-full min-w-0 flex-1 space-y-2">
+            {data.map((d) => (
+              <li key={d.key} className="rounded-xl px-3 py-2" style={{ background: '#0b1729' }}>
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-2 font-semibold text-white"><i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: RESULT_COLOR[d.key] }} />{d.key}</span>
+                  <span className="st-num font-bold text-white">{d.n}건 <span className="text-xs font-normal" style={{ color: N.sub }}>{d.pct}%</span></span>
+                </div>
+                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full" style={{ background: '#13243e' }}>
+                  <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: RESULT_COLOR[d.key] }} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Panel>
+    );
+  }
+  
+  function FieldChart() {
+    const max = Math.max(...FIELD_ROWS.map((f) => f.flagged));
+    return (
+      <Panel icon={BarChart3} title="② 점검분야별 위험 발생 빈도" hint="주의 + 불량 건수" className="h-full">
+        <div style={{ height: 252 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={FIELD_ROWS} layout="vertical" margin={{ top: 4, right: 14, bottom: 0, left: 0 }} barCategoryGap={7}>
+              <CartesianGrid stroke={N.grid} horizontal={false} />
+              <XAxis type="number" allowDecimals={false} domain={[0, max + 1]} tick={TICK} tickLine={false} axisLine={false} />
+              <YAxis type="category" dataKey="field" width={136} tick={{ ...TICK, fill: '#c7d7ea', fontSize: 11.5 }} tickLine={false} axisLine={false} tickFormatter={(f) => `${f} (${FIELD_RATE[f]}%)`} />
+              <Tooltip
+                contentStyle={TT_STYLE} labelStyle={TT_LABEL} itemStyle={TT_ITEM} cursor={{ fill: 'rgba(148,180,220,0.08)' }} isAnimationActive={false}
+                formatter={(v, n) => [`${v}건`, n]}
+                labelFormatter={(f) => { const d = FIELD_ROWS.find((x) => x.field === f); return d ? `${f} · 점검 ${d.total}건 중 ${d.flagged}건 지적` : f; }}
+              />
+              <Bar dataKey="caution" name="주의(경미)" stackId="risk" fill="#f59e0b" isAnimationActive={false} />
+              <Bar dataKey="bad" name="불량(시정요구)" stackId="risk" fill="#ef4444" radius={[0, 4, 4, 0]} isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs" style={{ color: N.sub }}>
+          <span className="flex items-center gap-1.5"><i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: '#f59e0b' }} />주의(경미)</span>
+          <span className="flex items-center gap-1.5"><i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: '#ef4444' }} />불량(시정요구)</span>
+          <span>괄호 안 % = 분야별 지적률(지적 ÷ 점검 건수)</span>
+        </div>
+      </Panel>
+    );
+  }
+  
+  function InsightPanel() {
+    const items = useMemo(buildInsights, []);
+    return (
+      <Panel icon={Sparkles} title="AI 분석 요약" hint="규칙 기반 자동 생성">
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+          {items.map((it) => {
+            const L = LV[it.tone];
+            const Icon = it.icon;
+            return (
+              <div key={it.title} className="rounded-xl border p-3" style={{ background: '#0b1729', borderColor: `${L.color}55` }}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold" style={{ color: L.text }}><Icon size={14} className="shrink-0" /><span className="st-keep">{it.title}</span></span>
+                  <span className="st-num shrink-0 text-sm font-bold text-white">{it.value}</span>
+                </div>
+                <p className="st-keep mt-1.5 text-xs leading-relaxed" style={{ color: '#c7d7ea' }}>{it.body}</p>
+                <p className="st-keep mt-1.5 flex gap-1 text-xs font-semibold" style={{ color: '#7dd3fc' }}><ArrowUpRight size={13} className="mt-px shrink-0" />{it.rec}</p>
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
+    );
+  }
+  
+  function ZoneRiskList({ onShowZone }) {
+    const list = useMemo(() => Object.keys(ZONE_PROFILES).map((k) => preRisk(k)).sort((a, b) => b.score - a.score), []);
+    return (
+      <Panel icon={Building2} title="3D 트윈 구역별 AI 사전 위험도" hint="과거 지적 반영 · 3D 보기로 구역 이동">
+        <ul className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
+          {list.map((r) => {
+            const lv = preLevel(r.score);
+            return (
+              <li key={r.key} className="flex items-center gap-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate font-semibold text-white">{r.label}</span>
+                    <span className="st-num shrink-0 font-bold" style={{ color: LV[lv].text }}>{r.score}점 · {PRE_LABEL[lv]}</span>
+                  </div>
+                  <div className="mt-1 h-1.5 overflow-hidden rounded-full" style={{ background: '#13243e' }}>
+                    <div className="h-full rounded-full" style={{ width: `${r.score}%`, background: LV[lv].color }} />
+                  </div>
+                  <div className="mt-0.5 text-xs" style={{ color: N.mute }}>지적 {r.cases.length}건 · 불량 {r.bad} · 주의 {r.caution}</div>
+                </div>
+                <button
+                  type="button" onClick={() => onShowZone(r.zone)} aria-label={`${r.label} 3D에서 보기`}
+                  className="flex h-9 shrink-0 cursor-pointer items-center gap-1 rounded-lg border px-2.5 text-xs font-semibold"
+                  style={{ borderColor: N.line, color: '#bae6fd', background: '#0b172a' }}
+                >
+                  3D 보기<ArrowUpRight size={13} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="st-keep mt-3 text-xs" style={{ color: N.mute }}>가중치 = 불량×3 + 주의×1 + 반복 지적 유형×1 + 최근 90일 지적×0.5 → 0~100점 환산 (70점↑ 높음 · 40점↑ 보통)</p>
+      </Panel>
+    );
+  }
+  
+  function HistoryTable({ preset, setPreset }) {
+    const [res, setRes] = useState('all');
+    const [field, setField] = useState('all');
+    const boxRef = useRef(null);
+    const P = preset ? preRisk(preset) : null;
+    useEffect(() => {
+      if (preset && boxRef.current && boxRef.current.scrollIntoView) boxRef.current.scrollIntoView({ block: 'start' });
+    }, [preset]);
+    const pass = (c, r) => (r === 'all' || c.result === r) && (field === 'all' || c.field === field) && (!P || matchProfile(P, c));
+    const rows = MOCK_CASES.filter((c) => pass(c, res));
+    const RES_TABS = [['all', '전체 지적'], ['불량', '불량(시정요구)'], ['주의', '주의(경미)']];
+    return (
+      <div ref={boxRef}>
+        <Panel icon={History} title="③ 주의·불량 점검 이력" hint={`${rows.length}건 · 최신순`}>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div role="tablist" aria-label="점검결과 필터" className="flex rounded-xl border p-1" style={{ background: '#0a1628', borderColor: N.line }}>
+              {RES_TABS.map(([k, label]) => {
+                const on = res === k;
+                return (
+                  <button
+                    key={k} type="button" role="tab" aria-selected={on} onClick={() => setRes(k)}
+                    className="cursor-pointer rounded-lg px-2.5 py-1.5 text-xs font-semibold sm:text-sm"
+                    style={on ? { background: '#1d4ed8', color: '#fff' } : { color: N.sub }}
+                  >
+                    {label} <span className="st-num">{MOCK_CASES.filter((c) => pass(c, k)).length}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <label className="flex items-center gap-1.5 text-xs" style={{ color: N.sub }}>
+              <Filter size={13} />점검분야
+              <select
+                value={field} onChange={(e) => setField(e.target.value)} aria-label="점검분야 필터"
+                className="h-9 cursor-pointer rounded-lg border px-2 text-sm" style={{ background: '#0b1729', borderColor: N.line, color: N.text }}
+              >
+                <option value="all">전체</option>
+                {MOCK_STATS.byField.map((f) => <option key={f.field} value={f.field}>{f.field}</option>)}
+              </select>
+            </label>
+            {P && (
+              <button
+                type="button" onClick={() => setPreset(null)}
+                className="flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold"
+                style={{ borderColor: 'rgba(56,189,248,0.5)', color: '#bae6fd', background: 'rgba(56,189,248,0.1)' }}
+              >
+                3D 구역 연계: {P.label}<X size={12} />
+              </button>
+            )}
+          </div>
+          <div className="st-scroll hidden overflow-x-auto md:block">
+            <table className="w-full border-collapse text-left text-sm" style={{ minWidth: 960 }}>
+              <thead>
+                <tr className="text-xs" style={{ color: N.sub }}>
+                  {['점검일자', '시설명', '점검구역', '점검분야', '점검결과', '지적사항', '조치내용', '조치완료일'].map((h) => (
+                    <th key={h} scope="col" className="whitespace-nowrap border-b px-2.5 py-2 font-semibold" style={{ borderColor: N.line }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((c) => (
+                  <tr key={c.id} className="align-top" style={{ borderBottom: `1px solid ${N.grid}` }}>
+                    <td className="st-num whitespace-nowrap px-2.5 py-2.5" style={{ color: N.sub }}>{c.date}</td>
+                    <td className="st-keep px-2.5 py-2.5 text-white">{c.facility}</td>
+                    <td className="st-keep px-2.5 py-2.5" style={{ color: '#c7d7ea' }}>{c.area}</td>
+                    <td className="whitespace-nowrap px-2.5 py-2.5" style={{ color: '#c7d7ea' }}>{c.field}</td>
+                    <td className="px-2.5 py-2.5"><ResultBadge r={c.result} full /></td>
+                    <td className="st-keep px-2.5 py-2.5 font-semibold text-white">{c.issue}</td>
+                    <td className="st-keep px-2.5 py-2.5" style={{ color: '#86efac' }}>{c.action}</td>
+                    <td className="st-num whitespace-nowrap px-2.5 py-2.5" style={{ color: N.sub }}>{c.done}<span className="ml-1 text-xs" style={{ color: N.mute }}>+{daysBetween(c.date, c.done)}일</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul className="space-y-2 md:hidden">
+            {rows.map((c) => (
+              <li key={c.id} className="rounded-xl p-3" style={{ background: '#0b1729' }}>
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <ResultBadge r={c.result} full />
+                  <span className="st-num" style={{ color: N.sub }}>{c.date}</span>
+                  <span style={{ color: N.mute }}>· {c.field}</span>
+                </div>
+                <div className="st-keep mt-1.5 text-sm font-semibold text-white">{c.issue}</div>
+                <div className="st-keep mt-0.5 text-xs" style={{ color: N.sub }}>{c.facility} · {c.area}</div>
+                <div className="st-keep mt-1.5 text-xs" style={{ color: '#86efac' }}>조치: {c.action} · {c.done} (+{daysBetween(c.date, c.done)}일)</div>
+              </li>
+            ))}
+          </ul>
+          {!rows.length && <p className="py-6 text-center text-sm" style={{ color: N.mute }}>조건에 맞는 지적 이력이 없습니다.</p>}
+        </Panel>
+      </div>
+    );
+  }
+  
+  function MockAnalysis({ preset, setPreset, onShowZone }) {
+    return (
+      <div className="st-scroll st-fade min-h-0 flex-1 space-y-3 sm:space-y-4 lg:overflow-y-auto lg:pr-1">
+        <AnalysisHeader />
+        <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-5">
+          <div className="lg:col-span-2"><ResultDonut /></div>
+          <div className="lg:col-span-3"><FieldChart /></div>
+        </div>
+        <InsightPanel />
+        <ZoneRiskList onShowZone={onShowZone} />
+        <HistoryTable preset={preset} setPreset={setPreset} />
+      </div>
+    );
+  }
+  
+  /* ════════════════ 10. 모드 B: 청소년·인솔교사용 모바일 대피 앱 ════════════════ */
+  const FW = 390; // 스마트폰 프레임 가로(px)
+  const FH = 812;
+  
+  function PhoneFrame({ children }) {
+    const btn = { position: 'absolute', width: 3, borderRadius: 2, background: '#2a2e35' };
+    return (
+      <div className="relative" style={{ width: FW, height: FH, borderRadius: 58, padding: 10, background: 'linear-gradient(145deg,#3b4048,#16191e 45%,#2b2f36)', boxShadow: '0 40px 80px rgba(15,23,42,0.32), inset 0 0 0 1.5px rgba(255,255,255,0.08)' }}>
+        <span style={{ ...btn, left: -3, top: 150, height: 32 }} />
+        <span style={{ ...btn, left: -3, top: 200, height: 58 }} />
+        <span style={{ ...btn, left: -3, top: 268, height: 58 }} />
+        <span style={{ ...btn, right: -3, top: 220, height: 92 }} />
+        <div className="relative h-full w-full overflow-hidden bg-white" style={{ borderRadius: 48 }}>{children}</div>
+      </div>
+    );
+  }
+  
+  function StatusBar() {
+    const now = useTicker(5000);
+    const p = kst(now);
+    return (
+      <div className="relative flex shrink-0 items-center justify-between px-7 font-semibold text-slate-900" style={{ height: 48, fontSize: 15 }}>
+        <span className="st-num">{p.h % 12 || 12}:{pad2(p.mi)}</span>
+        <span className="absolute left-1/2 top-2.5 -translate-x-1/2 rounded-full bg-black" style={{ width: 108, height: 30 }} />
+        <span className="flex items-center gap-1.5"><Signal size={16} strokeWidth={2.4} /><Wifi size={16} strokeWidth={2.4} /><BatteryFull size={22} /></span>
+      </div>
+    );
+  }
+  
+  function Compass({ theta, k }) {
+    const t = (theta * Math.PI) / 180;
+    const ang = (Math.atan2(Math.sin(t), Math.cos(t) * k) * 180) / Math.PI;
+    return (
+      <div className="grid h-11 w-11 place-items-center rounded-full" style={{ background: 'rgba(17,21,27,0.88)', boxShadow: '0 4px 12px rgba(0,0,0,0.35)' }} title="나침반 (빨간 바늘이 북쪽)">
+        <svg width="34" height="34" viewBox="-17 -17 34 34" aria-hidden="true">
+          <circle r="15" fill="none" stroke="rgba(255,255,255,0.18)" />
+          {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
+            <line key={a} x1="0" y1="-15" x2="0" y2={a % 90 === 0 ? -12 : -13.5} stroke="rgba(255,255,255,0.45)" transform={`rotate(${a})`} />
+          ))}
+          <g transform={`rotate(${ang.toFixed(1)})`}>
+            <path d="M0 -12 L3.6 0 L-3.6 0Z" fill="#ef4444" />
+            <path d="M0 12 L3.6 0 L-3.6 0Z" fill="#e5e7eb" />
+            <circle r="1.6" fill="#111827" />
+          </g>
+        </svg>
+      </div>
+    );
+  }
+  
+  function MapBtn({ label, onClick, active, children }) {
+    return (
+      <button
+        type="button" aria-label={label} title={label} onClick={onClick}
+        className="grid h-11 w-11 cursor-pointer place-items-center rounded-full text-slate-900"
+        style={{ background: active ? '#fff' : 'rgba(255,255,255,0.82)', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}
+      >
+        {children}
+      </button>
+    );
+  }
+  
+  /* 바닥면에 투영한 3D 대피 경로 — 평시: 초록 점선 / 비상: 파란 화살표 리본(흐름·그려지기 애니메이션) */
+  function RouteLayer({ geo, route, phase }) {
+    const fid = useMemo(() => uid('route'), []);
+    if (!route || route.pts.length < 2) return null;
+    const P = (x, y) => geo.toScreen(x, y, 0.12);
+    const poly = (arr) => arr.map(([x, y]) => { const q = P(x, y); return `${q[0].toFixed(1)},${q[1].toFixed(1)}`; }).join(' ');
+    const pts = route.pts;
+    const scr = pts.map(([x, y]) => P(x, y));
+    const d = scr.map((q, i) => `${i ? 'L' : 'M'}${q[0].toFixed(1)} ${q[1].toFixed(1)}`).join('');
+    const lenPx = scr.reduce((sum, q, i) => (i ? sum + Math.hypot(q[0] - scr[i - 1][0], q[1] - scr[i - 1][1]) : 0), 0);
+    const segs = [];
+    for (let i = 1; i < pts.length; i += 1) {
+      const a = pts[i - 1]; const b = pts[i];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      segs.push({ a, b, L, u: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] });
+    }
+    const total = segs.reduce((m, sg) => m + sg.L, 0);
+    const at = (t) => {
+      let rem = t;
+      for (let i = 0; i < segs.length; i += 1) {
+        const sg = segs[i];
+        if (rem <= sg.L || i === segs.length - 1) {
+          const k = Math.min(rem, sg.L);
+          return { p: [sg.a[0] + sg.u[0] * k, sg.a[1] + sg.u[1] * k], u: sg.u };
+        }
+        rem -= sg.L;
+      }
+      return { p: pts[pts.length - 1], u: [1, 0] };
+    };
+    const arrow = (p, u, size) => {
+      const n = [-u[1], u[0]];
+      return poly([
+        [p[0] - u[0] * size * 0.55 + n[0] * size, p[1] - u[1] * size * 0.55 + n[1] * size],
+        [p[0] + u[0] * size * 0.95, p[1] + u[1] * size * 0.95],
+        [p[0] - u[0] * size * 0.55 - n[0] * size, p[1] - u[1] * size * 0.55 - n[1] * size],
+        [p[0] - u[0] * size * 0.05, p[1] - u[1] * size * 0.05],
+      ]);
+    };
+    const end = at(total);
+    const cls = phase === 'out' ? 'st-route-out' : 'st-route-in';
+    if (!route.emergency) {
+      return (
+        <g pointerEvents="none" className={cls}>
+          <path d={d} fill="none" stroke="#22c55e" strokeOpacity="0.24" strokeWidth="11" strokeLinecap="round" strokeLinejoin="round" />
+          <path d={d} fill="none" stroke="#4ade80" strokeWidth="4.4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="0.1 9" />
+          <polygon points={arrow(end.p, end.u, 0.62)} fill="#4ade80" stroke="#14532d" strokeWidth="1" />
+        </g>
+      );
+    }
+    const W = 0.58; // 화살표 리본 반폭(m)
+    const ribbon = segs.map((sg) => {
+      const n = [-sg.u[1], sg.u[0]];
+      const a = [sg.a[0] - sg.u[0] * W, sg.a[1] - sg.u[1] * W];
+      const b = [sg.b[0] + sg.u[0] * W, sg.b[1] + sg.u[1] * W];
+      return poly([[a[0] + n[0] * W, a[1] + n[1] * W], [b[0] + n[0] * W, b[1] + n[1] * W], [b[0] - n[0] * W, b[1] - n[1] * W], [a[0] - n[0] * W, a[1] - n[1] * W]]);
+    });
+    const chevrons = [];
+    for (let t = 1.1; t < total - 1.0; t += 1.3) { const q = at(t); chevrons.push(arrow(q.p, q.u, 0.42)); }
+    return (
+      <g pointerEvents="none" className={cls}>
+        <defs><filter id={fid} x="-25%" y="-25%" width="150%" height="150%"><feGaussianBlur stdDeviation="5" /></filter></defs>
+        <g filter={`url(#${fid})`} opacity="0.9">{ribbon.map((pp, i) => <polygon key={`g${i}`} points={pp} fill="#38bdf8" />)}</g>
+        <g opacity="0.6">{ribbon.map((pp, i) => <polygon key={`r${i}`} points={pp} fill="#0ea5e9" />)}</g>
+        <path d={d} fill="none" stroke="#bae6fd" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 9" className="st-flow" />
+        {chevrons.map((pp, i) => <polygon key={`c${i}`} points={pp} fill="#f0f9ff" className="st-chev" style={{ animationDelay: `${(i * 0.09).toFixed(2)}s` }} />)}
+        <polygon points={arrow(end.p, end.u, 0.72)} fill="#e0f2fe" stroke="#0284c7" strokeWidth="1.2" />
+        {phase !== 'out' && (
+          <path
+            d={d} fill="none" stroke="#ffffff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"
+            strokeDasharray={lenPx.toFixed(1)} className="st-draw" style={{ '--len': lenPx.toFixed(1) }}
+          />
+        )}
+      </g>
+    );
+  }
+  
+  function HazardArea({ geo }) {
+    const [x, y, w, h] = HAZARD.area;
+    const pts = rectPts(x, y, w, h).map(([px, py]) => { const q = geo.toScreen(px, py, 0.08); return `${q[0].toFixed(1)},${q[1].toFixed(1)}`; }).join(' ');
+    return <polygon points={pts} fill="rgba(239,68,68,0.32)" stroke="#f87171" strokeWidth="1.4" strokeDasharray="4 3" className="st-glow-danger" pointerEvents="none" />;
+  }
+  
+  function BlockedMark({ at }) {
+    const [x, y] = at;
+    return (
+      <g pointerEvents="none">
+        <circle cx={x} cy={y} r="21" fill="rgba(239,68,68,0.3)" className="st-blink" />
+        <circle cx={x} cy={y} r="14" fill="#dc2626" stroke="#fff" strokeWidth="2.5" />
+        <path d={`M${x - 5} ${y - 5}L${x + 5} ${y + 5}M${x + 5} ${y - 5}L${x - 5} ${y + 5}`} stroke="#fff" strokeWidth="3" strokeLinecap="round" />
+      </g>
+    );
+  }
+  
+  function BlockBadge({ at, boxW }) {
+    const x = clamp(at[0], 62, boxW - 62);
+    return (
+      <div className="pointer-events-none absolute z-10" style={{ left: x, top: at[1] + 20, transform: 'translateX(-50%)' }}>
+        <span className="st-pop flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold text-white" style={{ background: '#dc2626', boxShadow: '0 0 0 2px rgba(255,255,255,0.92), 0 6px 14px rgba(0,0,0,0.35)' }}>
+          <X size={12} strokeWidth={3} />중앙계단 통제
+        </span>
+      </div>
+    );
+  }
+  
+  function PinShape({ color, children }) {
+    return (
+      <svg width="30" height="38" viewBox="0 0 30 38" aria-hidden="true">
+        <path d="M15 37s13-14 13-22.5A13 13 0 0 0 2 14.5C2 23 15 37 15 37z" fill={color} stroke="#fff" strokeWidth="2" />
+        {children}
+      </svg>
+    );
+  }
+  
+  function CurrentPin({ at, label, boxW }) {
+    const x = clamp(at[0], 46, boxW - 46);
+    return (
+      <div className="pointer-events-none absolute z-10" style={{ left: x, top: at[1], transform: 'translate(-50%,-100%)' }}>
+        <div className="flex flex-col items-center">
+          <div className="relative mb-1.5 whitespace-nowrap rounded-xl bg-white px-2.5 py-1 text-center text-xs font-bold leading-tight text-slate-900" style={{ boxShadow: '0 6px 16px rgba(0,0,0,0.35)' }}>
+            현재 위치<br /><span className="text-sm">{label}</span>
+            <span className="absolute left-1/2 top-full -translate-x-1/2" style={{ width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '6px solid #fff' }} />
+          </div>
+          <PinShape color="#2563eb"><circle cx="15" cy="14" r="5" fill="#fff" /></PinShape>
+        </div>
+        <span className="st-ping absolute rounded-full" style={{ left: '50%', bottom: -6, width: 24, height: 12, marginLeft: -12, border: '2px solid #60a5fa' }} />
+      </div>
+    );
+  }
+  
+  function ExitPin({ at, label, color, boxW }) {
+    const x = clamp(at[0], 50, boxW - 50);
+    return (
+      <div className="pointer-events-none absolute z-10" style={{ left: x, top: at[1], transform: 'translate(-50%,-100%)' }}>
+        <div className="st-pop flex flex-col items-center">
+          <div className="mb-1 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-bold text-white" style={{ background: color, boxShadow: '0 6px 16px rgba(0,0,0,0.35)' }}>{label}</div>
+          <PinShape color={color}><g transform="translate(7.5 6.5)"><DoorOpen size={15} color="#fff" strokeWidth={2.4} /></g></PinShape>
+        </div>
+      </div>
+    );
+  }
+  
+  function RouteCard({ route }) {
+    const em = route.emergency;
+    const color = em ? '#0284c7' : '#16a34a';
+    const Icon = em ? Navigation : DoorOpen;
+    return (
+      <div key={route.key} className="st-pop flex items-center gap-3 rounded-2xl bg-white px-3.5 py-2.5" style={{ boxShadow: '0 8px 20px rgba(0,0,0,0.3)', border: `1.5px solid ${em ? '#7dd3fc' : '#bbf7d0'}` }} aria-live="polite">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ background: em ? '#e0f2fe' : '#dcfce7', color }}><Icon size={20} /></span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-semibold" style={{ color }}>{em ? '우회 대피 경로' : '가까운 대피로'}</div>
+          <div className="truncate text-sm font-bold text-slate-900">{route.target.label}</div>
+        </div>
+        <div className="flex shrink-0 items-end gap-2.5 text-right">
+          <div>
+            <div className="text-slate-500" style={{ fontSize: 10.5 }}>남은 거리</div>
+            <div className="st-num text-xl font-bold leading-none text-slate-900">{route.dist}<span className="ml-0.5 text-xs font-semibold text-slate-500">m</span></div>
+          </div>
+          <div className="h-8 w-px bg-slate-200" />
+          <div>
+            <div className="text-slate-500" style={{ fontSize: 10.5 }}>예상 소요</div>
+            <div className="st-num text-xl font-bold leading-none" style={{ color }}>{route.secs}<span className="ml-0.5 text-xs font-semibold text-slate-500">초</span></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  function RouteMap({ mstate, zones, floor, setFloor, route, onCall }) {
+    const M = MOBILE_STATES[mstate];
+    const [boxRef, size] = useElementSize();
+    const [labels, setLabels] = useState(true);
+    const [voice, setVoice] = useState(false);
+    const [voiceNote, setVoiceNote] = useState(null);
+    const here = floor === NAV_FLOOR;
+    const geo = useIsoGeometry({
+      width: size.width, height: size.height, floorIds: [floor], mode3d: true, theta: MOBILE_VIEW.theta, k: MOBILE_VIEW.k, zs: 0.8,
+      theme: 'mobile', statusMap: zones, gap: 0, backH: 1.9, frontH: 0.9, intH: 1.6, furniture: false, labelsTopOnly: false,
+      pad: { l: 18, r: 18, t: 54, b: 186 }, labelMin: 10, labelMax: 12, labelK: 0.95, short: true, tags: false,
+    });
+    const blockedZone = route.blocked ? route.blocked.zone : null;
+    const mute = useMemo(() => (here ? [route.target.zone, blockedZone].filter(Boolean) : []), [here, route.target.zone, blockedZone]);
+    const layerState = useMemo(() => ({ labels }), [labels]);
+  
+    // 경로가 바뀌면 이전 경로는 흐려지며 사라지고 새 경로가 그려짐
+    const prevRef = useRef(route);
+    const [leaving, setLeaving] = useState(null);
+    useEffect(() => {
+      const prev = prevRef.current;
+      if (prev.key === route.key) return undefined;
+      prevRef.current = route;
+      setLeaving(prev);
+      const t = setTimeout(() => setLeaving(null), 600);
+      return () => clearTimeout(t);
+    }, [route]);
+  
+    useEffect(() => { stopSpeech(); setVoice(false); }, [mstate, floor, route.key]);
+    useEffect(() => {
+      loadKoVoice();
+      const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
+      if (synth && synth.addEventListener) synth.addEventListener('voiceschanged', loadKoVoice);
+      return () => {
+        if (synth && synth.removeEventListener) synth.removeEventListener('voiceschanged', loadKoVoice);
+        stopSpeech();
+      };
+    }, []);
+  
+    const toggleVoice = () => {
+      if (voice) { stopSpeech(); setVoice(false); return; }
+      const res = speakKo(M.voice, () => setVoice(false));
+      setVoiceNote(res === 'ok' ? null : res);
+      setVoice(true);
+    };
+  
+    const end = route.pts[route.pts.length - 1];
+    const stairs = [24.5, 13];
+  
+    return (
+      <div ref={boxRef} className="absolute inset-0 overflow-hidden" style={{ background: 'radial-gradient(130% 90% at 50% 35%,#3a414c 0%,#282d35 62%,#1f242b 100%)' }}>
+        {geo && (
+          <IsoSvg geo={geo} theme="mobile" layers={layerState} mute={mute}>
+            {here && route.emergency && <HazardArea geo={geo} />}
+            {here && leaving && <RouteLayer key={`${leaving.key}-out`} geo={geo} route={leaving} phase="out" />}
+            {here && <RouteLayer key={route.key} geo={geo} route={route} phase="in" />}
+            {here && route.blocked && <BlockedMark at={geo.toScreen(stairs[0], stairs[1], 0.2)} />}
+          </IsoSvg>
+        )}
+        {geo && here && route.blocked && <BlockBadge at={geo.toScreen(stairs[0], stairs[1], 0.2)} boxW={size.width} />}
+        {geo && here && <ExitPin key={`x-${route.key}`} at={geo.toScreen(end[0], end[1], 0.2)} label={route.target.label} color={route.emergency ? '#16a34a' : '#15803d'} boxW={size.width} />}
+        {geo && here && <CurrentPin at={geo.toScreen(route.loc.x, route.loc.y, 0.2)} label={route.loc.short} boxW={size.width} />}
+  
+        <div className="absolute inset-x-3 bottom-3 flex flex-col gap-2.5">
+          <div className="flex items-end justify-between">
+            <Compass theta={MOBILE_VIEW.theta} k={MOBILE_VIEW.k} />
+            <div className="flex gap-2">
+              <MapBtn label={labels ? '방 번호 숨기기' : '방 번호 보기'} active={labels} onClick={() => setLabels((v) => !v)}><Layers size={20} /></MapBtn>
+              <MapBtn label="다른 층 보기" onClick={() => setFloor(nextFloor(floor))}><span className="text-base font-bold">{floor}</span></MapBtn>
+            </div>
+          </div>
+          {voice && (
+            <div className="st-pop rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed text-white" style={{ background: 'rgba(15,23,42,0.92)' }} role="status">
+              <span className="mb-0.5 flex items-center gap-1.5 text-xs font-semibold" style={{ color: '#7dd3fc' }}><Volume2 size={13} />음성 안내</span>
+              {M.voice}
+              {voiceNote && (
+                <span className="mt-1 block text-xs" style={{ color: '#94a3b8' }}>
+                  {voiceNote === 'unsupported' ? '이 브라우저는 음성 합성을 지원하지 않아 자막으로 안내합니다.' : '기기에 한국어 음성이 없으면 기본 음성이나 자막으로 안내합니다.'}
+                </span>
+              )}
+            </div>
+          )}
+          {here ? <RouteCard route={route} /> : (
+            <div className="flex items-center gap-3 rounded-2xl bg-white px-3.5 py-2.5" style={{ boxShadow: '0 8px 20px rgba(0,0,0,0.3)' }}>
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ background: '#dbeafe', color: '#2563eb' }}><MapPin size={20} /></span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-bold text-slate-900">현재 위치는 {FLOOR_KO[NAV_FLOOR]} {route.loc.label}</div>
+                <div className="truncate text-xs text-slate-500">{FLOOR_KO[floor]} 비상구와 계단 위치를 보고 있습니다</div>
+              </div>
+              <button type="button" onClick={() => setFloor(NAV_FLOOR)} className="shrink-0 cursor-pointer rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white">내 위치</button>
+            </div>
+       )}
+       <div className="flex gap-2">
+         <button
+           type="button" onClick={toggleVoice} aria-pressed={voice}
+           className="flex h-12 min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white text-base font-bold text-slate-900"
+           style={{ boxShadow: '0 8px 20px rgba(0,0,0,0.3)' }}
+         >
+           {voice ? <span className="st-eq" style={{ color: RED }}><i /><i /><i /><i /></span> : <Mic size={20} />}
+           {voice ? '음성 안내 중지' : '음성 안내 시작'}
+         </button>
+         <button
+           type="button" onClick={onCall} aria-label="119 긴급 신고" title="119 긴급 신고"
+           className="flex h-12 shrink-0 cursor-pointer items-center gap-1.5 rounded-2xl px-4 text-base font-bold text-white"
+           style={{ background: RED, boxShadow: '0 8px 20px rgba(229,34,47,0.4)' }}
+         >
+           <PhoneCall size={18} />119
+         </button>
+       </div>
+     </div>
+   </div>
+ );
+}
+
+function AedMap() {
+ return (
+   <svg viewBox="0 0 320 124" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" role="img" aria-label="주변 AED 위치 지도">
+     <rect width="320" height="124" fill="#eef0ea" />
+     <path d="M0 0H92L56 124H0Z" fill="#d6ebcf" />
+     <path d="M252 0H320V64Z" fill="#d6ebcf" />
+     <g fill="#c6e3bd">
+       <circle cx="22" cy="30" r="7" /><circle cx="40" cy="72" r="9" /><circle cx="18" cy="104" r="8" /><circle cx="292" cy="18" r="8" />
+     </g>
+     <g fill="none" strokeLinecap="round">
+       <path d="M-10 96L330 62" stroke="#d6dae0" strokeWidth="15" />
+       <path d="M-10 96L330 62" stroke="#fff" strokeWidth="11" />
+       <path d="M140 -10L162 134" stroke="#d6dae0" strokeWidth="11" />
+       <path d="M140 -10L162 134" stroke="#fff" strokeWidth="7" />
+       <path d="M284 -10L312 134" stroke="#e3bd54" strokeWidth="12" />
+       <path d="M284 -10L312 134" stroke="#f7da82" strokeWidth="8" />
+     </g>
+     <g fill="#e1e4e8" stroke="#cfd4da" strokeWidth="1">
+       <rect x="66" y="10" width="52" height="26" rx="2" transform="rotate(-6 92 23)" />
+       <rect x="80" y="104" width="44" height="18" rx="2" transform="rotate(-6 102 113)" />
+       <rect x="236" y="88" width="40" height="24" rx="2" transform="rotate(-6 256 100)" />
+     </g>
+     <rect x="172" y="16" width="92" height="34" rx="3" fill="#dbe7f8" stroke="#8fb0de" strokeWidth="1.2" transform="rotate(-6 218 33)" />
+     <text x="232" y="37" fontSize="9" textAnchor="middle" fill="#3b5b8a" fontWeight="700" transform="rotate(-6 218 33)" style={SVG_TEXT}>숙소동</text>
+     <path d="M214 30 L192 40" stroke="#2563eb" strokeWidth="1.6" strokeDasharray="3 3" />
+     <circle cx="216" cy="29" r="8" fill="#3b82f6" opacity="0.2" />
+     <circle cx="216" cy="29" r="4.2" fill="#2563eb" stroke="#fff" strokeWidth="1.6" />
+     <g transform="translate(177 6)">
+       <path d="M13 40s12-13 12-21A12 12 0 0 0 1 19c0 8 12 21 12 21z" fill={RED} stroke="#fff" strokeWidth="1.8" />
+       <path d="M13 24.5c-3.8-2.8-5.2-4.9-3.5-6.6 1.2-1.2 2.8-.8 3.5.4.7-1.2 2.3-1.6 3.5-.4 1.7 1.7.3 3.8-3.5 6.6z" fill="#fff" />
+       <path d="M13.5 17.4l-1.8 3.2h1.6l-.9 2.6 2.2-3.4h-1.6z" fill={RED} />
+     </g>
+   </svg>
+ );
+}
+
+function ManualView({ onCall, loc }) {
+ const [open, setOpen] = useState(null);
+ return (
+   <div className="absolute inset-0" style={{ background: '#f2f4f7' }}>
+     <div className="st-scroll absolute inset-0 overflow-y-auto px-4 pt-4" style={{ paddingBottom: 92 }}>
+       <h2 className="text-2xl font-bold tracking-tight text-slate-900">초동대응 매뉴얼</h2>
+       <p className="mt-1 text-sm text-slate-500">카드를 누르면 상황별 3단계 행동 요령이 열립니다</p>
+       <div className="mt-4 space-y-3">
+         {MANUALS.map((m) => {
+           const Icon = m.icon;
+           const on = open === m.id;
+           return (
+             <div key={m.id} className="overflow-hidden rounded-2xl bg-white" style={{ boxShadow: CARD_SHADOW }}>
+               <button type="button" onClick={() => setOpen(on ? null : m.id)} aria-expanded={on} className="flex w-full cursor-pointer items-center gap-3.5 p-4 text-left">
+                 <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl" style={{ background: m.tint, color: m.color }}><Icon size={30} /></span>
+                 <span className="min-w-0 flex-1">
+                   <span className="block text-lg font-bold text-slate-900">{m.no}. {m.title}</span>
+                   <span className="st-keep mt-0.5 block text-sm text-slate-500">{m.summary}</span>
+                 </span>
+                 <ChevronDown size={18} className={`shrink-0 text-slate-400 transition-transform ${on ? 'rotate-180' : ''}`} />
+               </button>
+               {on && (
+                 <ol className="space-y-2.5 border-t border-slate-100 px-4 pb-4 pt-3">
+                   {m.steps.map((s, i) => (
+                     <li key={s} className="flex gap-2.5 text-sm text-slate-700">
+                       <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-bold text-white" style={{ background: m.color }}>{i + 1}</span>
+                       <span className="st-keep pt-0.5 leading-snug">{s}</span>
+                     </li>
+                   ))}
+                 </ol>
+               )}
+             </div>
+           );
+         })}
+       </div>
+       <div className="mt-3 overflow-hidden rounded-2xl bg-white" style={{ boxShadow: CARD_SHADOW }}>
+         <div className="flex items-center justify-between px-4 pt-3.5">
+           <h3 className="text-base font-bold text-slate-900">주변 AED 위치</h3>
+           <span className="text-xs font-semibold" style={{ color: RED }}>가장 가까운 1대</span>
+         </div>
+         <div className="mx-4 mt-2.5 overflow-hidden rounded-xl" style={{ height: 124 }}><AedMap /></div>
+         <div className="flex items-start gap-3 px-4 py-3.5">
+           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full" style={{ background: '#fee2e2', color: RED }}><HeartPulse size={18} /></span>
+           <div className="min-w-0">
+             <div className="text-sm font-bold text-slate-900">1층 로비 안내데스크 옆</div>
+             <div className="st-keep text-xs text-slate-500">{loc.label}에서 계단으로 1층 이동 · 1층 보건실에도 1대 비치</div>
+           </div>
+         </div>
+       </div>
+     </div>
+     <div className="absolute inset-x-0 bottom-0 px-4 pb-3 pt-6" style={{ background: 'linear-gradient(to top,#f2f4f7 58%,rgba(242,244,247,0))' }}>
+       <button
+         type="button" onClick={onCall}
+         className="flex h-14 w-full cursor-pointer items-center justify-center gap-2.5 rounded-2xl text-lg font-bold text-white"
+         style={{ background: RED, boxShadow: '0 8px 20px rgba(229,34,47,0.35)' }}
+       >
+         <PhoneCall size={22} />119 긴급 신고
+       </button>
+     </div>
+   </div>
+ );
+}
+
+/* 119 신고 접수 시뮬레이션 — 위치 좌표·센서 데이터 전송 확인 */
+function ReportModal({ loc, scenario, at, onClose }) {
+ const snap = useMemo(() => {
+   const r = SIM.radar[SIM.radar.length - 1];
+   const peak = SIM.sound.reduce((m, d) => Math.max(m, d.db), 0);
+   const still = scenario === 'fire' ? 10 + Math.floor(Math.max(0, at - SIM.since) / 1000) : 0;
+   return { alt: r ? r.alt : 1.16, peak, still };
+ }, [at, scenario]);
+ useEffect(() => {
+   const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+   window.addEventListener('keydown', onKey);
+   return () => window.removeEventListener('keydown', onKey);
+ }, [onClose]);
+ const rows = [
+   ['위치 좌표', `숙소동 2F · X ${loc.front[0].toFixed(1)}m · Y ${loc.front[1].toFixed(1)}m`],
+   ['측위', `${loc.tag} · 오차 ±2m`],
+   ['센서 데이터', `레이더 고도 ${snap.alt.toFixed(2)}m · 무동작 ${snap.still}초 · 음향 최대 ${snap.peak}dB`],
+   ['전송 시각', `${hms(at)} KST`],
+   ['함께 전달', '관제실 · 인솔교사'],
+ ];
+ return (
+   <div className="absolute inset-0 z-40 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.6)' }} onClick={onClose}>
+     <div
+       className="st-pop w-full rounded-3xl bg-white p-5 text-slate-900" style={{ boxShadow: '0 24px 60px rgba(0,0,0,0.4)' }}
+       onClick={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true" aria-label="119 신고 접수 시뮬레이션"
+     >
+       <div className="st-check mx-auto grid h-14 w-14 place-items-center rounded-full" style={{ background: '#dcfce7', color: '#16a34a' }}><Check size={30} strokeWidth={3} /></div>
+       <div className="mt-3 flex items-center justify-center gap-1.5 text-xs font-bold" style={{ color: RED }}><PhoneCall size={13} />119 긴급 신고</div>
+       <h3 className="mt-1 text-center text-lg font-bold">신고 접수 시뮬레이션</h3>
+       <p className="st-keep mt-2 text-center text-sm leading-relaxed text-slate-600">국립청소년수련원 {loc.report} 사각지대 위치 좌표 및 센서 데이터가 전송되었습니다</p>
+       <dl className="mt-4 space-y-1.5 rounded-2xl bg-slate-50 p-3.5 text-xs">
+         {rows.map(([k, v]) => (
+           <div key={k} className="flex justify-between gap-3">
+             <dt className="shrink-0 text-slate-500">{k}</dt>
+             <dd className="st-keep text-right font-semibold text-slate-900">{v}</dd>
+           </div>
+         ))}
+       </dl>
+       <p className="mt-3 text-center text-xs text-slate-400">시연용 화면입니다 · 실제 119 전화는 연결되지 않습니다</p>
+       <button type="button" onClick={onClose} className="mt-3 h-12 w-full cursor-pointer rounded-xl text-base font-bold text-white" style={{ background: '#0f172a' }}>확인</button>
+     </div>
+   </div>
+ );
+}
+
+function MenuSheet({ loc, onClose }) {
+ const SrcIcon = loc.src === 'qr' ? QrCode : Bluetooth;
+ return (
+   <div className="absolute inset-0 z-20" onClick={onClose}>
+     <div className="absolute right-3 w-64 rounded-2xl bg-white p-3.5 text-sm text-slate-700 ring-1 ring-black/5" style={{ top: 98, boxShadow: '0 16px 40px rgba(15,23,42,0.25)' }} onClick={(e) => e.stopPropagation()}>
+       <div className="flex items-center justify-between">
+         <span className="font-bold text-slate-900">내 위치 정보</span>
+         <button type="button" aria-label="닫기" onClick={onClose} className="grid h-8 w-8 cursor-pointer place-items-center rounded-full hover:bg-slate-100"><X size={16} /></button>
+       </div>
+       <div className="mt-2 flex items-start gap-2"><SrcIcon size={16} className="mt-0.5 shrink-0 text-blue-600" /><span className="st-keep">{loc.tag} 인식 · {FLOOR_KO[NAV_FLOOR]} {loc.label} (오차 ±2m)</span></div>
+       <div className="mt-2 flex items-start gap-2"><QrCode size={16} className="mt-0.5 shrink-0 text-slate-900" /><span className="st-keep">입소 안내 QR로 실행된 무설치 모바일 웹</span></div>
+     </div>
+   </div>
+ );
+}
+
+/* 출발 위치 선택 — BLE 비콘·QR 태그 인식을 흉내 낸 드롭다운 */
+function LocationPicker({ value, onChange }) {
+ const [open, setOpen] = useState(false);
+ const ref = useRef(null);
+ const L = LOCATIONS[value];
+ const SrcIcon = L.src === 'qr' ? QrCode : Bluetooth;
+ useEffect(() => {
+   if (!open) return undefined;
+   const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+   const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+   document.addEventListener('pointerdown', onDown);
+   window.addEventListener('keydown', onKey);
+   return () => { document.removeEventListener('pointerdown', onDown); window.removeEventListener('keydown', onKey); };
+ }, [open]);
+ return (
+   <div ref={ref} className="relative">
+     <button
+       type="button" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} aria-label={`현재 위치 선택: ${L.label}`}
+       className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 py-1 pl-2 pr-1.5 text-left"
+     >
+       <SrcIcon size={14} className="shrink-0 text-blue-600" />
+       <span className="leading-tight">
+         <span className="block text-slate-500" style={{ fontSize: 10 }}>현재 위치</span>
+         <span className="block whitespace-nowrap text-xs font-bold text-slate-900">{L.label}</span>
+       </span>
+       <ChevronDown size={14} className={`shrink-0 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+     </button>
+     {open && (
+       <div role="menu" className="st-pop absolute right-0 top-full z-40 mt-1.5 w-60 rounded-2xl bg-white p-1.5 ring-1 ring-black/10" style={{ boxShadow: '0 16px 40px rgba(15,23,42,0.25)' }}>
+         <div className="px-2.5 pb-1.5 pt-1 text-slate-500" style={{ fontSize: 11 }}>BLE 비콘·QR 태그 위치 시뮬레이션</div>
+         {LOC_ORDER.map((id) => {
+           const o = LOCATIONS[id];
+           const I = o.src === 'qr' ? QrCode : Bluetooth;
+           const on = id === value;
+           return (
+             <button
+               key={id} type="button" role="menuitemradio" aria-checked={on} onClick={() => { onChange(id); setOpen(false); }}
+               className="flex w-full cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-slate-50" style={on ? { background: '#eff6ff' } : undefined}
+             >
+               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg" style={{ background: on ? '#2563eb' : '#f1f5f9', color: on ? '#fff' : '#334155' }}><I size={15} /></span>
+               <span className="min-w-0 flex-1">
+                 <span className="block text-sm font-bold text-slate-900">{o.label}</span>
+                 <span className="block text-xs text-slate-500">{o.tag}</span>
+               </span>
+               {on && <Check size={16} className="shrink-0 text-blue-600" />}
+             </button>
+           );
+         })}
+       </div>
+     )}
+   </div>
+ );
+}
+
+const MTABS = [
+ { id: 'route', icon: Navigation, label: '3D 대피 경로' },
+ { id: 'manual', icon: BookOpen, label: '초동대응 매뉴얼' },
+];
+
+function MobileApp({ scenario, mstate, zones, tab, setTab, floor, setFloor, loc, setLoc, route, onReport }) {
+ const M = MOBILE_STATES[mstate];
+ const B = M.banner;
+ const BannerIcon = B.icon;
+ const L = LOCATIONS[loc];
+ const [menu, setMenu] = useState(false);
+ const [reportAt, setReportAt] = useState(null);
+ const openReport = () => { const now = Date.now(); setReportAt(now); onReport(loc, now); };
+ const closeReport = useCallback(() => setReportAt(null), []);
+ return (
+   <div className="relative flex h-full flex-col bg-white text-slate-900">
+     <StatusBar />
+     <div className="relative z-30 flex shrink-0 items-center justify-between gap-2 pl-4 pr-2" style={{ height: 50 }}>
+       <div className="flex min-w-0 items-center gap-1.5"><LogoMark size={24} tone="red" /><span className="text-lg font-bold tracking-tight">SafeTwin</span></div>
+       <div className="flex items-center gap-0.5">
+         <LocationPicker value={loc} onChange={setLoc} />
+         <button type="button" aria-label="메뉴" onClick={() => setMenu((v) => !v)} className="grid h-10 w-10 cursor-pointer place-items-center rounded-full hover:bg-slate-100"><Menu size={22} /></button>
+       </div>
+     </div>
+     <div key={mstate} className="st-pop flex shrink-0 items-center gap-3 px-4 py-2.5" style={{ background: B.bg, color: B.fg }} role="status" aria-live="polite">
+       <BannerIcon size={24} className={mstate === 'emergency' ? 'st-blink shrink-0' : 'shrink-0'} />
+       <div className="min-w-0 flex-1">
+         <div className="text-lg font-bold leading-tight">{B.title}</div>
+         <div className="truncate text-xs" style={{ opacity: 0.88 }}>{B.sub}</div>
+       </div>
+       <button
+         type="button" onClick={() => setFloor(nextFloor(floor))} aria-label="지도 층 바꾸기"
+         className="flex shrink-0 cursor-pointer items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-bold" style={{ background: 'rgba(255,255,255,0.2)', color: '#fff' }}
+       >
+         {FLOOR_KO[floor]} {floor}<ChevronsUpDown size={14} />
+       </button>
+     </div>
+     <div className="relative min-h-0 flex-1">
+       {tab === 'route'
+         ? <RouteMap mstate={mstate} zones={zones} floor={floor} setFloor={setFloor} route={route} onCall={openReport} />
+         : <ManualView onCall={openReport} loc={L} />}
+     </div>
+     <nav role="tablist" aria-label="앱 화면" className="grid shrink-0 grid-cols-2 border-t border-slate-200 bg-white">
+       {MTABS.map((t) => {
+         const on = tab === t.id;
+         const Icon = t.icon;
+         return (
+           <button
+             key={t.id} type="button" role="tab" aria-selected={on} onClick={() => setTab(t.id)}
+             className="flex h-14 cursor-pointer flex-col items-center justify-center gap-0.5 text-xs font-semibold" style={{ color: on ? RED : '#94a3b8' }}
+           >
+             <Icon size={21} strokeWidth={on ? 2.4 : 2} />{t.label}
+           </button>
+         );
+       })}
+     </nav>
+     <div className="flex shrink-0 items-start justify-center bg-white" style={{ height: 22 }}>
+       <span style={{ width: 128, height: 5, borderRadius: 3, background: '#111' }} />
+     </div>
+     {menu && <MenuSheet loc={L} onClose={() => setMenu(false)} />}
+     {reportAt && <ReportModal loc={L} scenario={scenario} at={reportAt} onClose={closeReport} />}
+   </div>
+ );
+}
+
+const FEATURES = [
+ { icon: QrCode, text: '입소 안내 QR·NFC 스캔으로 3초 안에 실행' },
+ { icon: Bluetooth, text: '복도 BLE 비콘으로 현재 위치 자동 인식' },
+ { icon: Navigation, text: '통제 구역을 피하는 3D 우회 대피 경로' },
+ { icon: BookOpen, text: '화재·낙상·응급 상황별 3단계 행동 카드' },
+];
+
+function MobileInfo() {
+ return (
+   <div className="hidden lg:flex lg:flex-col lg:justify-center">
+     <div className="rounded-3xl bg-white/75 p-6 ring-1 ring-slate-900/5" style={{ boxShadow: CARD_SHADOW }}>
+       <p className="text-sm font-semibold" style={{ color: RED }}>청소년·인솔교사용</p>
+       <h2 className="st-keep mt-1 text-2xl font-bold leading-snug text-slate-900">설치 없이 QR로 여는 모바일 대피 앱</h2>
+       <p className="st-keep mt-2 text-sm leading-relaxed text-slate-600">수련원 입소 안내문의 QR을 스캔하면 스마트폰 브라우저에서 바로 실행되는 모바일 웹(PWA)입니다.</p>
+       <ul className="mt-5 space-y-3">
+         {FEATURES.map((f) => {
+           const Icon = f.icon;
+           return (
+             <li key={f.text} className="flex items-start gap-3 text-sm text-slate-700">
+               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-900 text-white"><Icon size={16} /></span>
+               <span className="st-keep pt-1.5">{f.text}</span>
+             </li>
+           );
+         })}
+       </ul>
+     </div>
+   </div>
+ );
+}
+
+function LinkPanel({ scenario, isLg, loc, setLoc, route, report }) {
+ const S = SCENARIOS[scenario];
+ const M = MOBILE_STATES[S.mobile];
+ const Icon = S.icon;
+ const L = LOCATIONS[loc];
+ return (
+   <div className="flex flex-col justify-center" style={{ order: isLg ? 0 : -1 }}>
+     <div className="rounded-3xl bg-white/80 p-4 ring-1 ring-slate-900/5 lg:p-5" style={{ boxShadow: CARD_SHADOW }}>
+       <div className="flex items-center justify-between gap-2">
+         <h3 className="text-sm font-bold text-slate-900">관제 시스템 연동</h3>
+         <span className="flex items-center gap-1.5 text-xs font-semibold text-green-600"><span className="st-blink h-2 w-2 rounded-full bg-green-500" />실시간</span>
+       </div>
+       <div key={scenario} className="st-pop mt-3 flex items-center gap-3 rounded-2xl border px-3 py-2.5" style={{ borderColor: S.color, background: `${S.color}14` }}>
+         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white" style={{ background: S.color }}><Icon size={18} /></span>
+         <div className="min-w-0">
+           <div className="text-xs text-slate-500">시나리오 {S.no} 수신</div>
+           <div className="truncate text-sm font-bold text-slate-900">{S.title}</div>
+         </div>
+       </div>
+       <div className="mt-4 hidden lg:block">
+         <div className="text-xs font-semibold text-slate-500">출발 위치 시뮬레이션 (BLE·QR)</div>
+         <div className="mt-2 grid grid-cols-1 gap-1.5">
+           {LOC_ORDER.map((id) => {
+             const o = LOCATIONS[id];
+             const on = id === loc;
+             const I = o.src === 'qr' ? QrCode : Bluetooth;
+             return (
+               <button
+                 key={id} type="button" onClick={() => setLoc(id)} aria-pressed={on}
+                 className="flex cursor-pointer items-center gap-2 rounded-xl border px-2.5 py-2 text-left text-sm transition-colors"
+                 style={{ borderColor: on ? '#2563eb' : '#e2e8f0', background: on ? '#eff6ff' : '#fff' }}
+               >
+                 <I size={15} color={on ? '#2563eb' : '#64748b'} />
+                 <span className="min-w-0 flex-1 truncate font-semibold text-slate-900">{o.label}</span>
+                 <span className="shrink-0 text-xs text-slate-400">{o.src === 'qr' ? 'QR' : 'BLE'}</span>
+               </button>
+             );
+           })}
+         </div>
+       </div>
+       <div className="mt-4 hidden space-y-2 border-t border-slate-200 pt-4 text-sm lg:block">
+         <div className="flex justify-between gap-2"><span className="text-slate-500">앱 상태</span><span className="font-semibold text-slate-900">{M.label} 배너</span></div>
+         <div className="flex justify-between gap-2"><span className="text-slate-500">대피 목표</span><span className="font-semibold text-slate-900">{route.target.label}</span></div>
+         <div className="flex justify-between gap-2"><span className="text-slate-500">남은 거리·시간</span><span className="st-num font-semibold text-slate-900">{route.dist}m · {route.secs}초</span></div>
+         <div className="flex justify-between gap-2"><span className="text-slate-500">측위</span><span className="font-semibold text-slate-900">{L.tag}</span></div>
+         <div className="flex justify-between gap-2"><span className="text-slate-500">최근 119 신고</span><span className="st-num font-semibold" style={{ color: report ? RED : '#0f172a' }}>{report ? `${hms(report.ts)} 접수` : '없음'}</span></div>
+       </div>
+       <p className="st-keep mt-3 text-xs text-slate-500">화면 아래 시뮬레이터 버튼을 누르면 이 앱 화면도 함께 바뀝니다.</p>
+     </div>
+   </div>
+ );
 }
 
 function MobileStage({ scenario, tab, setTab, floor, setFloor, loc, setLoc, onReport, report }) {
-  const isLg = useMedia('(min-width: 1024px)');
-  const [cellRef, cell] = useElementSize();
-  const S = SCENARIOS[scenario];
-  const route = useMemo(() => planRoute(loc, S.mobile), [loc, S.mobile]);
-  let scale = 1;
-  if (cell.width) scale = Math.min(scale, (cell.width - 4) / FW);
-  if (isLg && cell.height) scale = Math.min(scale, (cell.height - 8) / FH);
-  scale = clamp(scale, 0.55, 1);
-  return (
-    <div className="st-stage p-3 sm:p-5" style={{ background: 'radial-gradient(1200px 640px at 50% 0%,#f8fafc 0%,#e7ecf2 55%,#dde3ea 100%)' }}>
-      <div className="st-stage-grid">
-        <MobileInfo />
-        <div ref={cellRef} className="flex min-h-0 items-start justify-center lg:items-center">
-          <div style={{ width: FW * scale, height: FH * scale }}>
-            <div style={{ width: FW, height: FH, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
-              <PhoneFrame>
-                <MobileApp
-                  scenario={scenario} mstate={S.mobile} zones={S.zones} tab={tab} setTab={setTab} floor={floor} setFloor={setFloor}
-                  loc={loc} setLoc={setLoc} route={route} onReport={onReport}
-                />
-              </PhoneFrame>
-            </div>
-          </div>
-        </div>
-        <LinkPanel scenario={scenario} isLg={isLg} loc={loc} setLoc={setLoc} route={route} report={report} />
-      </div>
-    </div>
-  );
+ const isLg = useMedia('(min-width: 1024px)');
+ const [cellRef, cell] = useElementSize();
+ const S = SCENARIOS[scenario];
+ const route = useMemo(() => planRoute(loc, S.mobile), [loc, S.mobile]);
+ let scale = 1;
+ if (cell.width) scale = Math.min(scale, (cell.width - 4) / FW);
+ if (isLg && cell.height) scale = Math.min(scale, (cell.height - 8) / FH);
+ scale = clamp(scale, 0.55, 1);
+ return (
+   <div className="st-stage p-3 sm:p-5" style={{ background: 'radial-gradient(1200px 640px at 50% 0%,#f8fafc 0%,#e7ecf2 55%,#dde3ea 100%)' }}>
+     <div className="st-stage-grid">
+       <MobileInfo />
+       <div ref={cellRef} className="flex min-h-0 items-start justify-center lg:items-center">
+         <div style={{ width: FW * scale, height: FH * scale }}>
+           <div style={{ width: FW, height: FH, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+             <PhoneFrame>
+               <MobileApp
+                 scenario={scenario} mstate={S.mobile} zones={S.zones} tab={tab} setTab={setTab} floor={floor} setFloor={setFloor}
+                 loc={loc} setLoc={setLoc} route={route} onReport={onReport}
+               />
+             </PhoneFrame>
+           </div>
+         </div>
+       </div>
+       <LinkPanel scenario={scenario} isLg={isLg} loc={loc} setLoc={setLoc} route={route} report={report} />
+     </div>
+   </div>
+ );
 }
 
 /* ════════════════ 11. 앱 루트 (모드 전환 · 시나리오 상태) ════════════════ */
 const readHash = () => {
-  try {
-    const h = (window.location.hash || '').replace('#', '');
-    return h === 'mobile' || h === 'admin' ? h : null;
-  } catch (e) {
-    return null;
-  }
+ try {
+   const h = (window.location.hash || '').replace('#', '');
+   return h === 'mobile' || h === 'admin' ? h : null;
+ } catch (e) {
+   return null;
+ }
 };
 
 export default function App() {
-  const [mode, setModeState] = useState(() => readHash() || 'admin');
-  const [scenario, setScenario] = useState('normal');
-  const [log, setLog] = useState(seedLog);
-  const [advisory, setAdvisory] = useState(false);
-  const [alertAck, setAlertAck] = useState(false);
-  const [twinView, setTwinView] = useState('all');
-  const [exploded, setExploded] = useState(true);
-  const [mtab, setMtab] = useState('route');
-  const [mfloor, setMfloor] = useState(NAV_FLOOR);
-  const [mloc, setMloc] = useState('r203');
-  const [report, setReport] = useState(null);
+ const [mode, setModeState] = useState(() => readHash() || 'admin');
+ const [scenario, setScenario] = useState('normal');
+ const [log, setLog] = useState(seedLog);
+ const [advisory, setAdvisory] = useState(false);
+ const [alertAck, setAlertAck] = useState(false);
+ const [twinView, setTwinView] = useState('all');
+ const [exploded, setExploded] = useState(true);
+ const [mtab, setMtab] = useState('route');
+ const [mfloor, setMfloor] = useState(NAV_FLOOR);
+ const [mloc, setMloc] = useState('r203');
+ const [report, setReport] = useState(null);
+ const [adminTab, setAdminTab] = useState('twin');
+ const [twinFocus, setTwinFocus] = useState(null);
+ const [histPreset, setHistPreset] = useState(null);
 
-  useEffect(() => {
-    const onHash = () => { const h = readHash(); if (h) setModeState(h); };
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+ useEffect(() => {
+   const onHash = () => { const h = readHash(); if (h) setModeState(h); };
+   window.addEventListener('hashchange', onHash);
+   return () => window.removeEventListener('hashchange', onHash);
+ }, []);
 
-  const setMode = (m) => {
-    setModeState(m);
-    try { if (window.location.hash !== `#${m}`) window.location.hash = m; } catch (e) { /* 무시 */ }
-  };
-  const pushLog = (entries) => setLog((prev) => [...entries.map(withId), ...prev].slice(0, 40));
+ const setMode = (m) => {
+   setModeState(m);
+   try { if (window.location.hash !== `#${m}`) window.location.hash = m; } catch (e) { /* 무시 */ }
+ };
+ const pushLog = (entries) => setLog((prev) => [...entries.map(withId), ...prev].slice(0, 40));
 
-  const runScenario = (id, customLogs) => {
-    const now = Date.now();
-    simSetScenario(id, now);
-    setScenario(id);
-    setAdvisory(id === 'rain');
-    setAlertAck(false);
-    setReport(null);
-    pushLog(customLogs || scenarioLogs(id, now));
-    const inc = INCIDENT[id];
-    if (inc && twinView !== 'all' && twinView !== inc.floor) setTwinView('all');
-    if (id === 'fire') { setMtab('route'); setMfloor(NAV_FLOOR); }
-  };
-  const resolveAdvisory = () => {
-    const now = Date.now();
-    runScenario('normal', [
-      { lv: 'ok', ts: now, text: '평시 정상 복구 — 1F 야외 데크 결로 주의 해제' },
-      { lv: 'ok', ts: now, text: '지도자 조치 완료 — 미끄럼 방지 매트 설치·실내 활동 전환' },
-    ]);
-  };
-  const onReport = (locId, ts) => {
-    const L = LOCATIONS[locId];
-    setReport({ loc: locId, ts });
-    pushLog([{ lv: 'alarm', ts, text: `모바일 119 신고 접수 — ${L.report} 사각지대 · 위치 좌표·센서 데이터 수신 (${L.tag})` }]);
-  };
+ const runScenario = (id, customLogs) => {
+   const now = Date.now();
+   simSetScenario(id, now);
+   setScenario(id);
+   setAdvisory(id === 'rain');
+   setAlertAck(false);
+   setReport(null);
+   setAdminTab('twin');
+   pushLog(customLogs || scenarioLogs(id, now));
+   const inc = INCIDENT[id];
+   if (inc && twinView !== 'all' && twinView !== inc.floor) setTwinView('all');
+   if (id === 'fire') { setMtab('route'); setMfloor(NAV_FLOOR); }
+ };
+ const resolveAdvisory = () => {
+   const now = Date.now();
+   runScenario('normal', [
+     { lv: 'ok', ts: now, text: '평시 정상 복구 — 1F 야외 데크 결로 주의 해제' },
+     { lv: 'ok', ts: now, text: '지도자 조치 완료 — 미끄럼 방지 매트 설치·실내 활동 전환' },
+   ]);
+ };
+ const showZone = (zoneId) => { setTwinFocus({ zone: zoneId, ts: Date.now() }); setAdminTab('twin'); };
+ const openAnalysis = (key) => { setHistPreset(key || null); setAdminTab('analysis'); };
+ const onReport = (locId, ts) => {
+   const L = LOCATIONS[locId];
+   setReport({ loc: locId, ts });
+   pushLog([{ lv: 'alarm', ts, text: `모바일 119 신고 접수 — ${L.report} 사각지대 · 위치 좌표·센서 데이터 수신 (${L.tag})` }]);
+ };
 
-  const showAlert = scenario === 'fire' && !alertAck;
-  const alerts = (showAlert ? 1 : 0) + (advisory ? 1 : 0) + (report ? 1 : 0);
-  const admin = mode === 'admin';
-  return (
-    <div className="st-root st-shell min-h-screen" style={{ background: admin ? N.bg : '#e7ecf2', color: admin ? N.text : '#0f172a' }}>
-      <style>{GLOBAL_CSS}</style>
-      <TopBar mode={mode} setMode={setMode} alerts={alerts} />
-      {showAlert && <EmergencyAlert onLocate={() => { setMode('admin'); setTwinView('2F'); }} onAck={() => setAlertAck(true)} />}
-      <main key={mode} className="st-main st-fade">
-        {admin ? (
-          <AdminDashboard
-            view={twinView} setView={setTwinView} exploded={exploded} setExploded={setExploded}
-            scenario={scenario} log={log} advisory={advisory} onAdvisoryDone={resolveAdvisory} report={report}
-          />
-        ) : (
-          <MobileStage
-            scenario={scenario} tab={mtab} setTab={setMtab} floor={mfloor} setFloor={setMfloor}
-            loc={mloc} setLoc={setMloc} onReport={onReport} report={report}
-          />
-        )}
-      </main>
-      <SimBar scenario={scenario} onRun={(id) => runScenario(id)} />
-    </div>
-  );
+ const showAlert = scenario === 'fire' && !alertAck;
+ const alerts = (showAlert ? 1 : 0) + (advisory ? 1 : 0) + (report ? 1 : 0);
+ const admin = mode === 'admin';
+ return (
+   <div className="st-root st-shell min-h-screen" style={{ colorScheme: 'dark', background: admin ? N.bg : '#e7ecf2', color: admin ? N.text : '#0f172a' }}>
+     <style>{GLOBAL_CSS}</style>
+     <TopBar mode={mode} setMode={setMode} alerts={alerts} />
+     {showAlert && <EmergencyAlert onLocate={() => { setMode('admin'); setAdminTab('twin'); setTwinView('2F'); }} onAck={() => setAlertAck(true)} />}
+     <main key={mode} className="st-main st-fade pb-32 lg:pb-0">
+       {admin ? (
+         <AdminDashboard
+           view={twinView} setView={setTwinView} exploded={exploded} setExploded={setExploded}
+           scenario={scenario} log={log} advisory={advisory} onAdvisoryDone={resolveAdvisory} report={report}
+           tab={adminTab} setTab={setAdminTab} focus={twinFocus} onFocusDone={() => setTwinFocus(null)} onShowZone={showZone}
+           onOpenAnalysis={openAnalysis} preset={histPreset} setPreset={setHistPreset}
+         />
+       ) : (
+         <MobileStage
+           scenario={scenario} tab={mtab} setTab={setMtab} floor={mfloor} setFloor={setMfloor}
+           loc={mloc} setLoc={setMloc} onReport={onReport} report={report}
+         />
+       )}
+     </main>
+     <SimBar scenario={scenario} onRun={(id) => runScenario(id)} />
+   </div>
+ );
 }
